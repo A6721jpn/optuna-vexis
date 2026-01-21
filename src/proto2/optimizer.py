@@ -1,0 +1,367 @@
+"""
+Proto2 Optimizer Module
+
+Optunaを使用した最適化エンジンラッパー
+（Proto1から流用・OGDEN係数用に拡張）
+"""
+
+import logging
+import warnings
+from pathlib import Path
+from typing import Callable, Optional, Any
+
+import optuna
+from optuna.samplers import TPESampler, RandomSampler
+from optuna.study import Study
+from optuna.trial import Trial
+
+# GPSamplerは実験的機能
+try:
+    from optuna.samplers import GPSampler
+    HAS_GP_SAMPLER = True
+except ImportError:
+    HAS_GP_SAMPLER = False
+
+try:
+    from optuna.samplers import NSGAIISampler
+    HAS_NSGAII = True
+except ImportError:
+    HAS_NSGAII = False
+
+
+logger = logging.getLogger(__name__)
+
+
+class Optimizer:
+    """
+    Optunaラッパークラス（Proto2用）
+    
+    OGDEN係数の最適化に対応
+    """
+    
+    def __init__(
+        self,
+        bounds: dict,
+        config: dict,
+        mode: str = "all",
+        storage_path: Optional[str | Path] = None
+    ):
+        """
+        Args:
+            bounds: 係数ごとの範囲 {"c": [(min,max),...], ...}
+            config: 最適化設定（optimizer_config.yamlのoptimizationセクション）
+            mode: "elastic_only" | "visco_only" | "all"
+            storage_path: Optunaストレージパス
+        """
+        self.bounds = bounds
+        self.config = config
+        self.mode = mode
+        self._study: Optional[Study] = None
+        self._current_trial: Optional[Trial] = None
+        
+        # サンプラー選択
+        sampler_name = config.get("sampler", "TPE").upper()
+        self._sampler = self._create_sampler(sampler_name)
+        
+        # ストレージ設定
+        if storage_path:
+            storage_path = Path(storage_path)
+            storage_path.parent.mkdir(parents=True, exist_ok=True)
+            self._storage = f"sqlite:///{storage_path}"
+        else:
+            self._storage = None
+        
+        # 単一目的最適化
+        self._directions = ["minimize"]
+        
+        logger.info(f"Optimizer初期化: sampler={sampler_name}, mode={mode}")
+    
+    def _create_sampler(self, name: str) -> Any:
+        """サンプラーを作成"""
+        seed = self.config.get("seed")
+        
+        if name == "TPE":
+            return TPESampler(seed=seed)
+        elif name == "GP":
+            if HAS_GP_SAMPLER:
+                return GPSampler(seed=seed)
+            else:
+                logger.warning("GPSamplerが利用不可。TPESamplerを使用します。")
+                return TPESampler(seed=seed)
+        elif name == "NSGAII":
+            if HAS_NSGAII:
+                return NSGAIISampler(seed=seed)
+            else:
+                logger.warning("NSGAIISamplerが利用不可。TPESamplerを使用します。")
+                return TPESampler(seed=seed)
+        elif name == "RANDOM":
+            return RandomSampler(seed=seed)
+        else:
+            logger.warning(f"未知のサンプラー: {name}。TPESamplerを使用します。")
+            return TPESampler(seed=seed)
+    
+    def create_study(self, study_name: str = "proto2_optimization") -> Study:
+        """Optunaスタディを作成"""
+        self._study = optuna.create_study(
+            study_name=study_name,
+            sampler=self._sampler,
+            direction=self._directions[0],
+            storage=self._storage,
+            load_if_exists=True
+        )
+        
+        logger.info(f"スタディ作成: {study_name}")
+        return self._study
+    
+    def suggest_ogden_params(self, trial: Trial) -> dict:
+        """
+        OGDEN係数を提案
+        
+        Args:
+            trial: Optunaトライアル
+        
+        Returns:
+            {"c": [...], "m": [...], "t": [...], "g": [...]}
+        """
+        self._current_trial = trial
+        params = {}
+        
+        # 対象係数を決定
+        if self.mode == "elastic_only":
+            target_keys = ["c", "m"]
+        elif self.mode == "visco_only":
+            target_keys = ["t", "g"]
+        else:
+            target_keys = ["c", "m", "t", "g"]
+        
+        for key in ["c", "m", "t", "g"]:
+            key_bounds = self.bounds.get(key, [])
+            values = []
+            
+            for i, bound in enumerate(key_bounds):
+                if key in target_keys and bound is not None:
+                    # 最適化対象
+                    low, high = bound
+                    val = trial.suggest_float(f"{key}_{i}", low, high)
+                    values.append(val)
+                else:
+                    # 固定値（boundsに格納されていないので元の値を使用）
+                    # boundsがNoneの場合は0.0
+                    values.append(0.0)
+            
+            params[key] = values
+        
+        return params
+    
+    def run_optimization(
+        self,
+        objective_func: Callable[[dict], float],
+        base_params: dict,
+        n_trials: Optional[int] = None,
+        timeout: Optional[int] = None,
+        callbacks: Optional[list] = None
+    ) -> Study:
+        """
+        最適化を実行
+        
+        Args:
+            objective_func: 目的関数（パラメータ辞書 -> 目的関数値）
+            base_params: 固定値用のベースパラメータ
+            n_trials: 試行回数
+            timeout: タイムアウト秒
+            callbacks: コールバックリスト
+        
+        Returns:
+            最適化済みStudy
+        """
+        if self._study is None:
+            self.create_study()
+        
+        if n_trials is None:
+            n_trials = self.config.get("max_trials", 100)
+        
+        # 対象係数を決定
+        if self.mode == "elastic_only":
+            target_keys = ["c", "m"]
+        elif self.mode == "visco_only":
+            target_keys = ["t", "g"]
+        else:
+            target_keys = ["c", "m", "t", "g"]
+        
+        def wrapped_objective(trial: Trial) -> float:
+            # OGDEN係数を提案
+            suggested = {}
+            
+            # 離散化ステップ（設定から取得、デフォルトはNone=連続値）
+            step = self.config.get("discretization_step")
+            
+            for key in ["c", "m", "t", "g"]:
+                key_bounds = self.bounds.get(key, [])
+                base_values = base_params.get(key, [])
+                values = []
+                
+                for i, bound in enumerate(key_bounds):
+                    if key in target_keys and bound is not None:
+                        low, high = bound
+                        if step is not None:
+                            # 離散化: stepの倍数に丸める
+                            val = trial.suggest_float(f"{key}_{i}", low, high, step=step)
+                        else:
+                            val = trial.suggest_float(f"{key}_{i}", low, high)
+                        values.append(val)
+                    else:
+                        # 固定値（ベースパラメータから取得）
+                        if i < len(base_values):
+                            values.append(base_values[i])
+                        else:
+                            values.append(0.0)
+                
+                suggested[key] = values
+            
+            return objective_func(suggested)
+        
+        logger.info(f"最適化開始: n_trials={n_trials}")
+        
+        # 離散化使用時はOptunaの冗長な警告を抑制
+        step = self.config.get("discretization_step")
+        if step is not None:
+            warnings.filterwarnings(
+                "ignore", 
+                message=".*range is not divisible by.*",
+                category=UserWarning,
+                module="optuna.distributions"
+            )
+            logger.info(f"係数離散化: step={step}（範囲調整あり）")
+        
+        self._study.optimize(
+            wrapped_objective,
+            n_trials=n_trials,
+            timeout=timeout,
+            callbacks=callbacks,
+            show_progress_bar=True
+        )
+        
+        logger.info("最適化完了")
+        return self._study
+    
+    def get_best_params(self, base_params: dict) -> Optional[dict]:
+        """
+        最良パラメータを取得
+        
+        Args:
+            base_params: 固定値用のベースパラメータ
+        
+        Returns:
+            完全なパラメータ辞書
+        """
+        if self._study is None:
+            return None
+        
+        try:
+            best_trial_params = self._study.best_params
+        except ValueError:
+            return None
+        
+        # 対象係数を決定
+        if self.mode == "elastic_only":
+            target_keys = ["c", "m"]
+        elif self.mode == "visco_only":
+            target_keys = ["t", "g"]
+        else:
+            target_keys = ["c", "m", "t", "g"]
+        
+        # パラメータを再構築
+        result = {}
+        for key in ["c", "m", "t", "g"]:
+            key_bounds = self.bounds.get(key, [])
+            base_values = base_params.get(key, [])
+            values = []
+            
+            for i, bound in enumerate(key_bounds):
+                param_name = f"{key}_{i}"
+                if key in target_keys and bound is not None and param_name in best_trial_params:
+                    values.append(best_trial_params[param_name])
+                else:
+                    if i < len(base_values):
+                        values.append(base_values[i])
+                    else:
+                        values.append(0.0)
+            
+            result[key] = values
+        
+        return result
+    
+    def get_best_value(self) -> Optional[float]:
+        """最良目的関数値を取得"""
+        if self._study is None:
+            return None
+        
+        try:
+            return self._study.best_value
+        except ValueError:
+            return None
+    
+    def get_n_trials(self) -> int:
+        """完了した試行数を取得"""
+        if self._study is None:
+            return 0
+        return len(self._study.trials)
+    
+    def is_converged(self, threshold: float) -> bool:
+        """収束判定"""
+        best_value = self.get_best_value()
+        if best_value is None:
+            return False
+        return best_value <= threshold
+    
+    def get_study_summary(self, base_params: dict) -> dict:
+        """スタディのサマリを取得"""
+        if self._study is None:
+            return {}
+        
+        return {
+            "n_trials": self.get_n_trials(),
+            "best_params": self.get_best_params(base_params),
+            "best_value": self.get_best_value(),
+            "sampler": type(self._sampler).__name__,
+            "optimization_mode": self.mode
+        }
+
+
+class ConvergenceCallback:
+    """収束時に最適化を停止するコールバック"""
+    
+    def __init__(self, threshold: float, patience: int = 20):
+        """
+        Args:
+            threshold: この値以下で収束とみなす
+            patience: 改善がない試行回数がこれを超えると停止（デフォルト20）
+        """
+        self.threshold = threshold
+        self.patience = patience
+        self._best_value = float("inf")
+        self._no_improvement_count = 0
+    
+    def __call__(self, study: Study, trial: optuna.trial.FrozenTrial) -> None:
+        current_value = trial.value
+        
+        if current_value is None:
+            return
+        
+        # 収束判定
+        if current_value <= self.threshold:
+            logger.info(f"収束達成: {current_value:.6f} <= {self.threshold}")
+            study.stop()
+            return
+        
+        # 改善判定
+        if current_value < self._best_value:
+            self._best_value = current_value
+            self._no_improvement_count = 0
+        else:
+            self._no_improvement_count += 1
+        
+        # Patience超過
+        if self._no_improvement_count >= self.patience:
+            logger.info(f"改善なし {self.patience} 試行。最適化停止。")
+            study.stop()

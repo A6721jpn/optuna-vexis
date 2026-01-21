@@ -1,0 +1,63 @@
+# =============================================================
+# Proto1 寸法定義ファイル
+# =============================================================
+# 各寸法は最適化変数として扱われる
+# STEPファイル内での参照方法を step_reference で指定
+#
+# 対象STEPファイル: example_1.stp
+# ラバードーム形状の2D断面プロファイル
+# 主な特徴点:
+#   - ドーム頂点: Z=1.71mm付近
+#   - ベース: Z=0mm
+#   - 外径: Y=2.8mm
+#   - 内径: Y=0.9mm付近
+
+dimensions:
+  # ドーム全体高さ（Z方向スケーリング）
+  # 元の高さ: 約1.71mm、これをスケールファクターで調整
+  - name: "height_scale"
+    description: "ドーム高さのスケールファクター"
+    type: "float"
+    min: 0.8
+    max: 1.2
+    initial: 1.0
+    unit: "-"
+    step_reference:
+      method: "scale_z"
+      axis: "Z"
+
+  # 全体サイズ（均一スケーリング）
+  # 形状全体を拡大/縮小
+  - name: "overall_scale"
+    description: "形状全体のスケールファクター"
+    type: "float"
+    min: 0.9
+    max: 1.1
+    initial: 1.0
+    unit: "-"
+    step_reference:
+      method: "scale_uniform"
+
+  # 横方向スケール（X/Y方向）
+  # ドームの径を調整
+  - name: "radial_scale"
+    description: "径方向のスケールファクター"
+    type: "float"
+    min: 0.85
+    max: 1.15
+    initial: 1.0
+    unit: "-"
+    step_reference:
+      method: "coordinate"
+      axis: "Y"
+
+# =============================================================
+# 使用可能な step_reference.method:
+#
+# - coordinate: 指定軸方向の座標変換
+#   - axis: X, Y, Z
+#
+# - scale_z: Z軸方向のスケーリング
+#
+# - scale_uniform: 全体の均一スケーリング
+# =============================================================

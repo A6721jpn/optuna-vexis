@@ -1,0 +1,92 @@
+# =============================================================
+# Proto1 最適化設定ファイル
+# =============================================================
+
+optimization:
+  # サンプラー:
+  # - "TPE": ベイズ最適化（推奨・デフォルト）。単一目的または多目的（重み付き和など）に有効。
+  # - "NSGAII": 多目的最適化専用（パレート解探索用）。objective_type: "multi" の場合に推奨。
+  # - "GP": ガウス過程（実験的）。
+  # - "RANDOM": ランダム探索。
+  sampler: "TPE"
+  
+  # 最大試行回数
+  max_trials: 30
+  
+  # 収束判定: この残差以下で終了
+  convergence_threshold: 0.02
+  
+  # 乱数シード（再現性のため）
+  seed: 42
+  
+  # 目的関数タイプ: "single" | "multi"
+  # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
+  # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはNSGAII推奨。
+  objective_type: "single"
+  
+  # 係数の離散化ステップ（オプション）
+  # CAEソフトの有効数字制限に合わせて離散値にする
+  # 例: 0.0001 = 小数点以下4桁、0.01 = 小数点以下2桁
+  # 未指定またはnull = 連続値（離散化なし）
+  discretization_step: 0.00001
+
+objective:
+  # 目的関数タイプ
+  # "rmse": カーブ全体のRMSE
+  # "multi": RMSE + 特徴量の重み付け
+  type: "rmse"
+  
+  # 多目的最適化時の重み
+  weights:
+    rmse: 1.0           # カーブ全体の一致度
+    peak_force: 0.3     # ピーク荷重の誤差
+    stiffness: 0.2      # 初期剛性の誤差
+
+  # 特徴量抽出設定
+  # 利用可能なタイプ:
+  # - "max": 最大値
+  # - "min": 最小値
+  # - "mean": 平均値
+  # - "slope": 指定範囲の傾き
+  # - "peak_position": 最大値の位置(Disp)
+  # - "value_at": 指定Dispでの値
+  # - "local_max": 極大値（ピーク）
+  features:
+    peak_force:
+      type: "local_max"   # 極大値（ピーク）
+      # prominence: 0.1   # 必要に応じて閾値を設定
+      column: "force"
+    
+    stiffness:
+      type: "slope"       # 初期傾き
+      column: "force"
+      range: [0.0, 0.3]   # 変位範囲 [mm]
+    
+    peak_position:
+      type: "peak_position"
+      column: "force"
+
+logging:
+  # ログレベル: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # ログファイル出力先
+  output_dir: "output/logs"
+
+paths:
+  # ターゲットカーブファイル（inputフォルダ内のマスターカーブ）
+  target_curve: "input/example_2_tgt.csv"
+  
+  # 入力STEPファイルディレクトリ
+  input_dir: "input"
+  
+  # 結果出力ディレクトリ
+  result_dir: "output"
+  
+  # VEXISサブモジュールパス
+  vexis_path: "vexis"
+
+# =============================================================
+#   Proto1 Optimization System
+#   Created: 2026-01-21
+# =============================================================

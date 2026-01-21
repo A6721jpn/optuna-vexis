@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Project outputs
+output/
+temp/
+*.log
+*.csv
+
+# Database
+*.db
+*.sqlite3
+
+# Vexis subdirectory ignores (if not submodule)
+vexis/results/
+vexis/temp/
+vexis/input/*.step

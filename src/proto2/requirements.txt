@@ -1,0 +1,10 @@
+# Proto2 Requirements
+# OGDEN材料モデル係数最適化システム
+
+optuna>=3.0
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+pyyaml>=6.0
+tqdm>=4.65
+matplotlib>=3.7

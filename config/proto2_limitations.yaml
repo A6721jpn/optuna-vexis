@@ -1,0 +1,34 @@
+# =============================================================
+# Proto2 OGDEN係数最適化範囲設定
+# =============================================================
+
+# 基準材料（初期値として使用）
+base_material: "Ogden_Rubber_v1"
+
+# 最適化範囲（現在値からのパーセンテージ）
+range_percent: 60  # ±60%
+
+# 最適化モード: "elastic_only" | "visco_only" | "all"
+# - elastic_only: c, m のみ最適化（弾性係数）
+# - visco_only: t, g のみ最適化（粘弾性係数）
+# - all: c, m, t, g すべて最適化（デフォルト）
+optimization_mode: "all"
+
+# CAE解析範囲（Strokeの範囲 mm）
+# ターゲットカーブ（実機データ）のStroke範囲より小さい範囲をCAEで解析
+cae_stroke_range:
+  min: 0.0
+  max: 0.5  # mm
+
+# 入力STEPファイル（固定形状）
+input_step: "example_1.stp"
+
+# 各係数の追加制約（オプション）
+constraints:
+  # 0でない係数の最小値（基準値が0の場合は固定）
+  min_nonzero: 0.001
+
+# =============================================================
+#   Proto2 Material Coefficient Optimization System
+#   Created: 2026-01-21
+# =============================================================
