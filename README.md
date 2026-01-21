@@ -1,83 +1,83 @@
 # Optuna for VEXIS (Proto2)
 
-Optunaを用いたOGDEN材料モデル係数の自動最適化システム。
-VEXIS (CAEソルバー) と連携し、ターゲットカーブ（実験値）に対するRMSEが最小となるパラメータを探索します。
+Automated optimization system for OGDEN material model coefficients using Optuna.
+Integrates with VEXIS (CAE solver) to find parameters that minimize the RMSE against target curves (experimental data).
 
-## 主な機能
+## Key Features
 
-- **係数最適化**: Optuna (TPE/NSGA-II) による効率的な探索
-- **自動離散化**: CAEソフトの有効数字に合わせた係数丸め処理（`step`パラメータ対応）
-- **結果可視化**: 最適化推移、最良カーブ比較、パレートフロントの自動プロット
-- **学習管理**: データベースによる中断/再開 (`--resume`)、バックアップ機能
+- **Coefficient Optimization**: Efficient search using Optuna (TPE/NSGA-II).
+- **Auto Discretization**: Coefficient rounding to match CAE significant digits (supports `step` parameter).
+- **Visualization**: Auto-plotting of optimization history, best curve comparison, and Pareto front.
+- **Study Management**: Pause/Resume with database (`--resume`) and backup functionality.
 
-## ディレクトリ構成
+## Directory Structure
 
 ```
 .
-├── config/                 # 設定ファイル
+├── config/                 # Configuration files
 │   └── optimizer_config.yaml
-├── input/                  # 入力ファイル (STEP, Target CSV)
-├── output/                 # 出力結果 (Log, Plots, DB, XML/YAML)
+├── input/                  # Input files (STEP, Target CSV)
+├── output/                 # Output results (Log, Plots, DB, XML/YAML)
 ├── src/
-│   └── proto2/            # ソースコード
-│       ├── main.py        # エントリポイント
-│       ├── optimizer.py   # Optunaラッパー
-│       ├── visualizer.py  # 可視化モジュール
+│   └── proto2/            # Source code
+│       ├── main.py        # Entry point
+│       ├── optimizer.py   # Optuna wrapper
+│       ├── visualizer.py  # Visualization module
 │       └── ...
-└── vexis/                  # CAEソルバー (Submodule)
+└── vexis/                  # CAE Solver (Submodule)
 ```
 
-## 必要要件
+## Requirements
 
 - Windows OS
 - Python 3.11+
-- 依存ライブラリ: `optuna`, `pandas`, `matplotlib`, `pyyaml`, `scipy` など
+- Dependencies: `optuna`, `pandas`, `matplotlib`, `pyyaml`, `scipy`, etc.
 
-## セットアップ
+## Setup
 
-1.  依存ライブラリのインストール
+1.  **Install dependencies**:
     ```bash
     pip install -r src/proto2/requirements.txt
     ```
 
-2.  VEXISサブモジュールの準備
+2.  **Prepare VEXIS submodule**:
     ```bash
     git submodule update --init --recursive
-    # VEXIS側のセットアップが必要な場合は実施してください
+    # Perform VEXIS side setup if necessary.
     ```
 
-## 使い方
+## Usage
 
-### 1. 設定の編集
+### 1. Edit Configuration
 
-`config/optimizer_config.yaml` で最適化パラメータを調整します。
+Adjust optimization parameters in `config/optimizer_config.yaml`.
 
 ```yaml
 optimization:
-  max_trials: 30              # 試行回数
-  discretization_step: 0.0001 # 係数の離散化ステップ（小数点以下4桁）
-  objective_type: "single"    # single(RMSE) または multi(多目的)
+  max_trials: 30              # Number of trials
+  discretization_step: 0.0001 # Discretization step (4 decimal places)
+  objective_type: "single"    # "single" (RMSE) or "multi" (Multi-objective)
 ```
 
-### 2. 最適化の実行
+### 2. Run Optimization
 
-プロジェクトルートから以下のコマンドを実行します。
+Run the following commands from the project root.
 
 ```bash
-# 新規実行（既存DBがある場合はバックアップされます）
+# New Run (Backs up existing DB if present)
 python -m src.proto2.main --config config/optimizer_config.yaml
 
-# 継続実行（既存DBの続きから再開）
+# Resume Run (Continues from existing DB)
 python -m src.proto2.main --config config/optimizer_config.yaml --resume
 ```
 
-### 3. 結果の確認
+### 3. Check Results
 
-`output/` ディレクトリに結果が出力されます。
+Results are output to the `output/` directory.
 
 - **`output/plots/`**:
-    - `optimization_history.png`: 最適化の推移グラフ
-    - `best_result_comparison.png`: ターゲット定義(点線)と最良結果(赤線)の比較
-- **`optimized_material.yaml`**: 最適化されたOGDEN係数定義
-- **`summary_proto2.json`**: 実行結果サマリ
-- **`optuna_study_proto2.db`**: 学習データベース
+    - `optimization_history.png`: Optimization history graph.
+    - `best_result_comparison.png`: Comparison of target (dotted) and best result (red line).
+- **`optimized_material.yaml`**: Optimized OGDEN coefficient definitions.
+- **`summary_proto2.json`**: Execution summary.
+- **`optuna_study_proto2.db`**: Study database.
