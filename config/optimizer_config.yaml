@@ -14,7 +14,7 @@ optimization:
   max_trials: 30
   
   # 収束判定: この残差以下で終了
-  convergence_threshold: 0.02
+  convergence_threshold: 0.05
   
   # 乱数シード（再現性のため）
   seed: 42

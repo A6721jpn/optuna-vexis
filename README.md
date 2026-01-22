@@ -41,7 +41,7 @@ Integrates with VEXIS (CAE solver) to find parameters that minimize the RMSE aga
     ```
 
 2.  **Prepare VEXIS submodule**:
-    ```bash
+    ```bash 
     git submodule update --init --recursive
     # Perform VEXIS side setup if necessary.
     ```

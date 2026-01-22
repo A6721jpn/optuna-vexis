@@ -18,7 +18,7 @@ optimization_mode: "all"
 # ターゲットカーブ（実機データ）のStroke範囲より小さい範囲をCAEで解析
 cae_stroke_range:
   min: 0.0
-  max: 0.5  # mm
+  max: 1.4  # mm
 
 # 入力STEPファイル（固定形状）
 input_step: "example_1.stp"

@@ -23,6 +23,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import optuna
 
 from .utils import (
     setup_logger,
@@ -138,6 +139,10 @@ def main() -> int:
     log_dir = project_root / "output" / "logs"
     logger = setup_logger("proto2", str(log_dir), level=log_level)
     
+    # Optunaのデフォルトログを抑制（カスタムログを見やすくするため）
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    logging.getLogger("optuna").setLevel(logging.WARNING)
+    
     logger.info("=" * 60)
     logger.info("Proto2 材料モデル係数最適化開始")
     logger.info("=" * 60)
@@ -202,8 +207,7 @@ def main() -> int:
         
         # 基準OGDEN係数を取得
         base_params = material_editor.get_ogden_params(base_material_name)
-        logger.info("基準OGDEN係数:")
-        logger.info(format_params_for_log(base_params))
+        logger.info(f"基準OGDEN係数:\n{format_params_for_log(base_params)}") #ここ手で変更した
         
         # 係数範囲を計算
         bounds = material_editor.calculate_bounds(
@@ -268,8 +272,8 @@ def main() -> int:
             trial_logger = TrialLogger(trial_id, str(log_dir))
             trial_logger.log_parameters(params)
             
-            logger.info(f"--- Trial {trial_count} ---")
-            logger.info(f"OGDEN係数:\n{format_params_for_log(params)}")
+            logger.info(f"\n\n{'='*20} Trial {trial_count} {'='*20}\n")
+            logger.info(f"OGDEN係数 (Input):\n{format_params_for_log(params)}")
             
             current_trial_num = trial_count  # 現在の試行番号を保存
             trial_count += 1
@@ -325,7 +329,7 @@ def main() -> int:
                 trial_logger.log_objectives(objectives)
                 
                 rmse = objectives["rmse"]
-                logger.info(f"RMSE: {rmse:.6f}")
+                logger.info(f"Trial {current_trial_num} Finished. RMSE: {rmse:.6f}")
                 
                 return rmse
                 

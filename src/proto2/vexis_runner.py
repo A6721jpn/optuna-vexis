@@ -13,6 +13,7 @@ import subprocess
 import signal
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -109,7 +110,7 @@ class VexisRunner:
         self,
         job_name: str,
         log_path: Optional[str | Path] = None,
-        timeout: int = 1800
+        timeout: Optional[int] = None
     ) -> Optional[Path]:
         """
         CAE解析を実行
@@ -117,7 +118,7 @@ class VexisRunner:
         Args:
             job_name: ジョブ名（結果ファイル名に使用）
             log_path: ログ出力先（省略時は標準出力）
-            timeout: タイムアウト秒数（デフォルト30分）
+            timeout: タイムアウト秒数（Noneの場合は無制限）
         
         Returns:
             成功時: 結果CSVファイルのパス
@@ -140,6 +141,7 @@ class VexisRunner:
         cmd = [python_cmd, str(self.vexis_main)]
         
         logger.info(f"VEXIS実行: {' '.join(cmd)}")
+        logger.info(f"CAE solver launched : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # ログファイルの準備
         log_file = None
@@ -176,21 +178,22 @@ class VexisRunner:
             self._current_process = proc
             
             # タイムアウト監視
-            def timeout_watcher():
-                start_time = time.time()
-                while proc.poll() is None:
-                    if self._stop_requested:
-                        logger.info("停止要求により中断")
-                        self._terminate_process(proc)
-                        return
-                    if time.time() - start_time > timeout:
-                        logger.error(f"VEXIS実行タイムアウト: {timeout}秒")
-                        self._terminate_process(proc)
-                        return
-                    time.sleep(1)
-            
-            watcher = threading.Thread(target=timeout_watcher, daemon=True)
-            watcher.start()
+            if timeout is not None and timeout > 0:
+                def timeout_watcher():
+                    start_time = time.time()
+                    while proc.poll() is None:
+                        if self._stop_requested:
+                            logger.info("停止要求により中断")
+                            self._terminate_process(proc)
+                            return
+                        if time.time() - start_time > timeout:
+                            logger.error(f"VEXIS実行タイムアウト: {timeout}秒")
+                            self._terminate_process(proc)
+                            return
+                        time.sleep(1)
+                
+                watcher = threading.Thread(target=timeout_watcher, daemon=True)
+                watcher.start()
             
             # リアルタイムログ出力
             try:
@@ -213,6 +216,8 @@ class VexisRunner:
             
             proc.wait()
             
+            logger.info(f"CAE solver finished : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
             if self._stop_requested:
                 logger.info("VEXIS実行が中断されました")
                 return None

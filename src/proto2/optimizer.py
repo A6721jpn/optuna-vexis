@@ -238,7 +238,7 @@ class Optimizer:
             n_trials=n_trials,
             timeout=timeout,
             callbacks=callbacks,
-            show_progress_bar=True
+            show_progress_bar=False
         )
         
         logger.info("最適化完了")
