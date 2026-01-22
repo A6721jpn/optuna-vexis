@@ -58,6 +58,19 @@ class Optimizer:
         self.mode = mode
         self._study: Optional[Study] = None
         self._current_trial: Optional[Trial] = None
+
+        # 離散化使用時はOptunaの冗長な警告を要約して表示
+        # "range is not divisible by step" という警告が大量に出るのを防ぐ
+        step = self.config.get("discretization_step")
+        if step is not None:
+            warnings.filterwarnings(
+                "ignore", 
+                message=".*range is not divisible by.*",
+                category=UserWarning,
+                module="optuna.distributions"
+            )
+            # 要約ログを一回だけ出力
+            logger.info(f"Discretization error for step={step} is suppressed")
         
         # サンプラー選択
         sampler_name = config.get("sampler", "TPE").upper()
@@ -245,16 +258,6 @@ class Optimizer:
         
         logger.info(f"最適化開始: 合計試行数={n_trials}, 残り試行数={remaining_trials}")
         
-        # 離散化使用時はOptunaの冗長な警告を抑制
-        step = self.config.get("discretization_step")
-        if step is not None:
-            warnings.filterwarnings(
-                "ignore", 
-                message=".*range is not divisible by.*",
-                category=UserWarning,
-                module="optuna.distributions"
-            )
-            logger.info(f"係数離散化: step={step}（範囲調整あり）")
         
         self._study.optimize(
             wrapped_objective,
