@@ -80,25 +80,40 @@ class Optimizer:
         """サンプラーを作成"""
         seed = self.config.get("seed")
         
+        # 初期探索回数の設定と検証
+        n_startup = self.config.get("n_startup_trials", 10)
+        max_trials = self.config.get("max_trials", 100)
+        
+        # 初期探索数が総試行数より多い場合は警告して修正
+        if n_startup > max_trials:
+            logger.warning(
+                f"初期探索数({n_startup})が総試行数({max_trials})を超えています。"
+                f"初期探索数を {max_trials} に制限します。"
+            )
+            n_startup = max_trials
+            
+        logger.info(f"初期探索回数: {n_startup}")
+        
         if name == "TPE":
-            return TPESampler(seed=seed)
+            return TPESampler(seed=seed, n_startup_trials=n_startup)
         elif name == "GP":
             if HAS_GP_SAMPLER:
-                return GPSampler(seed=seed)
+                return GPSampler(seed=seed, n_startup_trials=n_startup)
             else:
                 logger.warning("GPSamplerが利用不可。TPESamplerを使用します。")
-                return TPESampler(seed=seed)
+                return TPESampler(seed=seed, n_startup_trials=n_startup)
         elif name == "NSGAII":
             if HAS_NSGAII:
+                # NSGAIIにはn_startup_trialsパラメータはないため指定しない
                 return NSGAIISampler(seed=seed)
             else:
                 logger.warning("NSGAIISamplerが利用不可。TPESamplerを使用します。")
-                return TPESampler(seed=seed)
+                return TPESampler(seed=seed, n_startup_trials=n_startup)
         elif name == "RANDOM":
             return RandomSampler(seed=seed)
         else:
             logger.warning(f"未知のサンプラー: {name}。TPESamplerを使用します。")
-            return TPESampler(seed=seed)
+            return TPESampler(seed=seed, n_startup_trials=n_startup)
     
     def create_study(self, study_name: str = "proto2_optimization") -> Study:
         """Optunaスタディを作成"""

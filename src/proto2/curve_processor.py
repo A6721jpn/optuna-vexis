@@ -123,6 +123,8 @@ class CurveProcessor:
                 unloading = None
         
         return loading, unloading
+    
+    def _find_column(self, df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
         """候補リストからカラムを探す"""
         df_cols_lower = {c.lower(): c for c in df.columns}
         for candidate in candidates:

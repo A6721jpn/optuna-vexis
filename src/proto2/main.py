@@ -262,8 +262,8 @@ def main() -> int:
         # 収束コールバック
         callbacks = [ConvergenceCallback(convergence_threshold)]
         
-        # 試行カウンタ
-        trial_count = 0
+        # 試行カウンタ（既存の試行数から開始）
+        trial_count = optimizer.get_n_trials()
         
         def objective_function(params: dict) -> float:
             """目的関数（Optunaから呼び出される）"""
