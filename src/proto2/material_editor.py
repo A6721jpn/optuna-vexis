@@ -110,7 +110,8 @@ class MaterialEditor:
         base_params: dict,
         range_percent: float,
         min_nonzero: float = 0.001,
-        mode: str = "all"
+        mode: str = "all",
+        step: Optional[float] = None
     ) -> dict:
         """
         係数の上下限を計算
@@ -141,6 +142,9 @@ class MaterialEditor:
         else:  # all
             target_keys = ["c", "m", "t", "g"]
         
+        # ステップ情報の取得（config.yaml等から渡されることを想定、なければ引数追加が必要）
+        # 引数に追加するため、インターフェースを変更
+        
         for key in ["c", "m", "t", "g"]:
             values = base_params.get(key, [])
             key_bounds = []
@@ -159,6 +163,19 @@ class MaterialEditor:
                     if abs(low) < min_nonzero and low != 0:
                         low = min_nonzero if val > 0 else -min_nonzero
                     
+                    # ステップ整合性修正（GP有効化のため）
+                    if step is not None and step > 0:
+                        import math
+                        # lowを切り上げ（範囲を狭める方向で安全側に）
+                        low = math.ceil(low / step) * step
+                        # highを切り捨て
+                        high = math.floor(high / step) * step
+                        
+                        # 範囲が潰れてしまった場合の救済
+                        if low >= high:
+                            # 少なくとも1ステップ分は確保
+                            high = low + step
+                    
                     key_bounds.append((low, high))
                 else:
                     # 0または対象外の場合は固定（範囲なし）
@@ -166,7 +183,7 @@ class MaterialEditor:
             
             bounds[key] = key_bounds
         
-        logger.info(f"係数範囲計算完了: mode={mode}, range=±{range_percent}%")
+        logger.info(f"係数範囲計算完了: mode={mode}, range=±{range_percent}%, step={step}")
         return bounds
     
     def add_trial_material(

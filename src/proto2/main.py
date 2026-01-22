@@ -210,9 +210,9 @@ def main() -> int:
         base_params = material_editor.get_ogden_params(base_material_name)
         logger.info(f"基準OGDEN係数:\n{format_params_for_log(base_params)}") #ここ手で変更した
         
-        # 係数範囲を計算
+        step = opt_config.get("discretization_step")
         bounds = material_editor.calculate_bounds(
-            base_params, range_percent, min_nonzero, opt_mode
+            base_params, range_percent, min_nonzero, opt_mode, step
         )
         
         # ターゲットカーブ読込・処理
@@ -274,6 +274,13 @@ def main() -> int:
             trial_logger.log_parameters(params)
             
             logger.info(f"\n\n{'='*20} Trial {trial_count} {'='*20}\n")
+            
+            # 使用サンプラーの表示
+            current_sampler = "Unknown"
+            if optimizer._study and optimizer._study.sampler:
+                current_sampler = type(optimizer._study.sampler).__name__
+            logger.info(f"Using Sampler: {current_sampler}")
+            
             logger.info(f"OGDEN係数 (Input):\n{format_params_for_log(params)}")
             
             current_trial_num = trial_count  # 現在の試行番号を保存
@@ -290,10 +297,17 @@ def main() -> int:
                 
                 # 3. CAE解析実行
                 if not args.dry_run:
+                    cae_start_time = datetime.now()
+                    logger.info(f"CAE解析開始: {cae_start_time.strftime('%H:%M:%S')}")
+                    
                     result_csv = vexis_runner.run_analysis(
                         job_base_name,
                         log_path=trial_logger.get_log_path("vexis")
                     )
+                    
+                    cae_end_time = datetime.now()
+                    duration = cae_end_time - cae_start_time
+                    logger.info(f"CAE解析完了: {cae_end_time.strftime('%H:%M:%S')} (所要時間: {duration})")
                     
                     if result_csv is None:
                         logger.error("CAE解析失敗")

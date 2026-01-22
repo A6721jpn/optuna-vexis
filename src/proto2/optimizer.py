@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional, Any
 
 import optuna
-from optuna.samplers import TPESampler, RandomSampler
+from optuna.samplers import TPESampler, RandomSampler, QMCSampler
 from optuna.study import Study
 from optuna.trial import Trial
 
@@ -72,10 +72,6 @@ class Optimizer:
             # 要約ログを一回だけ出力
             logger.info(f"Discretization error for step={step} is suppressedgit push")
         
-        # サンプラー選択
-        sampler_name = config.get("sampler", "TPE").upper()
-        self._sampler = self._create_sampler(sampler_name)
-        
         # ストレージ設定
         if storage_path:
             storage_path = Path(storage_path)
@@ -83,50 +79,77 @@ class Optimizer:
             self._storage = f"sqlite:///{storage_path}"
         else:
             self._storage = None
+
+        # サンプラー選択
+        sampler_name = config.get("sampler", "TPE").upper()
+        self._sampler = self._create_sampler(sampler_name)
         
         # 単一目的最適化
         self._directions = ["minimize"]
         
-        logger.info(f"Optimizer初期化: sampler={sampler_name}, mode={mode}")
+        logger.info(f"Optimizer初期化: sampler={type(self._sampler).__name__}, mode={mode}")
     
     def _create_sampler(self, name: str) -> Any:
-        """サンプラーを作成"""
+        """サンプラーを作成（初期探索はSobol、以降は指定サンプラー）"""
         seed = self.config.get("seed")
-        
-        # 初期探索回数の設定と検証
         n_startup = self.config.get("n_startup_trials", 10)
-        max_trials = self.config.get("max_trials", 100)
         
-        # 初期探索数が総試行数より多い場合は警告して修正
-        if n_startup > max_trials:
-            logger.warning(
-                f"初期探索数({n_startup})が総試行数({max_trials})を超えています。"
-                f"初期探索数を {max_trials} に制限します。"
-            )
-            n_startup = max_trials
+        # 現在の試行数を取得して、初期探索期間か判定
+        current_trials = 0
+        if self._storage:
+            try:
+                # DB内のスタディ情報を取得
+                summaries = optuna.study.get_all_study_summaries(self._storage)
+                
+                # 指定スタディ名、もしくは最初のスタディを採用
+                target_study_name = "proto2_material_optimization"
+                found_study = None
+                
+                for s in summaries:
+                    if s.study_name == target_study_name:
+                        found_study = s
+                        break
+                
+                # 指定名がない場合、DB内の唯一のスタディであればそれを使う
+                if found_study is None and len(summaries) == 1:
+                    found_study = summaries[0]
+                
+                if found_study:
+                    current_trials = found_study.n_trials
+                    
+            except Exception as e:
+                logger.warning(f"試行数確認失敗: {e}")
+        
+        logger.info(f"現在の試行数: {current_trials}, 初期探索設定: {n_startup}")
+        
+        # 初期探索期間ならSobol列を使用
+        if current_trials < n_startup:
+            logger.info("初期探索フェーズ: QMCSampler(Sobol)を使用します")
+            return QMCSampler(scramble=True, seed=seed)
             
-        logger.info(f"初期探索回数: {n_startup}")
+        # 本番サンプラー
+        logger.info(f"本番探索フェーズ: {name}Samplerを使用します")
         
         if name == "TPE":
-            return TPESampler(seed=seed, n_startup_trials=n_startup)
+            return TPESampler(seed=seed, n_startup_trials=0) # StartupはSobolでやったので0
         elif name == "GP":
             if HAS_GP_SAMPLER:
-                return GPSampler(seed=seed, n_startup_trials=n_startup, warn_independent_sampling=False)
+                # 独立サンプリング警告を抑制
+                return GPSampler(seed=seed, n_startup_trials=0, warn_independent_sampling=False)
             else:
                 logger.warning("GPSamplerが利用不可。TPESamplerを使用します。")
-                return TPESampler(seed=seed, n_startup_trials=n_startup)
+                return TPESampler(seed=seed, n_startup_trials=0)
         elif name == "NSGAII":
             if HAS_NSGAII:
-                # NSGAIIにはn_startup_trialsパラメータはないため指定しない
                 return NSGAIISampler(seed=seed)
             else:
                 logger.warning("NSGAIISamplerが利用不可。TPESamplerを使用します。")
-                return TPESampler(seed=seed, n_startup_trials=n_startup)
+                return TPESampler(seed=seed, n_startup_trials=0)
         elif name == "RANDOM":
             return RandomSampler(seed=seed)
         else:
             logger.warning(f"未知のサンプラー: {name}。TPESamplerを使用します。")
-            return TPESampler(seed=seed, n_startup_trials=n_startup)
+            return TPESampler(seed=seed, n_startup_trials=0)
     
     def create_study(self, study_name: str = "proto2_optimization") -> Study:
         """Optunaスタディを作成"""
