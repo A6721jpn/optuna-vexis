@@ -70,7 +70,7 @@ class Optimizer:
                 module="optuna.distributions"
             )
             # 要約ログを一回だけ出力
-            logger.info(f"Discretization error for step={step} is suppressed")
+            logger.info(f"Discretization error for step={step} is suppressedgit push")
         
         # サンプラー選択
         sampler_name = config.get("sampler", "TPE").upper()
@@ -111,7 +111,7 @@ class Optimizer:
             return TPESampler(seed=seed, n_startup_trials=n_startup)
         elif name == "GP":
             if HAS_GP_SAMPLER:
-                return GPSampler(seed=seed, n_startup_trials=n_startup)
+                return GPSampler(seed=seed, n_startup_trials=n_startup, warn_independent_sampling=False)
             else:
                 logger.warning("GPSamplerが利用不可。TPESamplerを使用します。")
                 return TPESampler(seed=seed, n_startup_trials=n_startup)
