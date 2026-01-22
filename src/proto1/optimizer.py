@@ -194,15 +194,23 @@ class Optimizer:
         if n_trials is None:
             n_trials = self.config.get("max_trials", 100)
         
+        # 既存の試行数を差し引いて、残りの試行数を決定
+        completed_trials = self.get_n_trials()
+        remaining_trials = n_trials - completed_trials
+        
+        if remaining_trials <= 0:
+            logger.info(f"既に {completed_trials} 試行完了しています。追加の試行は行いません（max_trials={n_trials}）")
+            return self._study
+
         def wrapped_objective(trial: Trial) -> float | tuple[float, ...]:
             params = self.suggest_params(trial)
             return objective_func(params)
         
-        logger.info(f"最適化開始: n_trials={n_trials}")
+        logger.info(f"最適化開始: 合計試行数={n_trials}, 残り試行数={remaining_trials}")
         
         self._study.optimize(
             wrapped_objective,
-            n_trials=n_trials,
+            n_trials=remaining_trials,
             timeout=timeout,
             callbacks=callbacks,
             show_progress_bar=True
