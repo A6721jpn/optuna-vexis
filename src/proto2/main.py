@@ -39,7 +39,8 @@ from .material_editor import MaterialEditor, save_optimized_material
 from .curve_processor import CurveProcessor
 from .vexis_runner import VexisRunner
 from .result_loader import ResultLoader
-from .objective import ObjectiveCalculator
+from .result_loader import ResultLoader
+from .objective import ObjectiveCalculator, FatalOptimizationError
 from .optimizer import Optimizer, ConvergenceCallback
 from .visualizer import Visualizer
 
@@ -333,6 +334,10 @@ def main() -> int:
                 
                 return rmse
                 
+            except FatalOptimizationError as e:
+                logger.critical(f"致命的なエラーが発生しました: {e}")
+                vexis_runner.request_stop()
+                sys.exit(1)
             except Exception as e:
                 logger.error(f"Trial {trial_count} エラー: {e}")
                 trial_logger.log_error(str(e))

@@ -75,14 +75,54 @@ class CurveProcessor:
             "force": pd.to_numeric(df[force_col], errors="coerce")
         })
         
-        result = result.dropna().sort_values("displacement").reset_index(drop=True)
+        result = result.dropna().reset_index(drop=True)
+        
+        # 重複する変位点の平均化処理は削除（往復分離のため）
+        # if result["displacement"].duplicated().any():
+        #     logger.debug("重複する変位点を平均化します")
+        #     result = result.groupby("displacement", as_index=False).mean()
+        
+        # 変位順ソートはしない（往復順序を保持するため）
+        # result = result.sort_values("displacement").reset_index(drop=True)
         
         logger.info(f"カーブ読込完了: {len(result)}点, 範囲=[{result['displacement'].min():.3f}, {result['displacement'].max():.3f}]")
         
         self._target_curve = result
         return result
-    
-    def _find_column(self, df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+
+    def split_cycle(self, df: pd.DataFrame) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """
+        カーブを行き（Loading）と帰り（Unloading）に分割
+        
+        Args:
+            df: 変位と荷重を含むDataFrame
+        
+        Returns:
+            (loading_df, unloading_df): 行きと帰りのDataFrame
+            帰りがない場合はunloading_dfはNone
+        """
+        if df.empty:
+            return df, None
+            
+        # 最大変位のインデックスを取得
+        # idxmax()は最初の最大値を返す
+        max_idx = df["displacement"].idxmax()
+        
+        # 行き（Loading）: 最初から最大変位まで
+        loading = df.iloc[:max_idx+1].copy().reset_index(drop=True)
+        
+        # 帰り（Unloading）: 最大変位から最後または変位0まで
+        # データが往復を含み、かつ最大変位以降にデータがある場合
+        unloading = None
+        if max_idx < len(df) - 1:
+            unloading = df.iloc[max_idx:].copy().reset_index(drop=True)
+            
+            # 帰りのデータが極端に少ない、または変位が減少していない場合はノイズとみなして除外も検討できるが
+            # ここでは単純に存在有無で判定
+            if len(unloading) < 2:
+                unloading = None
+        
+        return loading, unloading
         """候補リストからカラムを探す"""
         df_cols_lower = {c.lower(): c for c in df.columns}
         for candidate in candidates:
@@ -201,27 +241,100 @@ class CurveProcessor:
         if len(df) < 2:
             raise ValueError("データ点数が不足しています")
         
-        # 補間関数作成
-        interp_func = interpolate.interp1d(
-            df["displacement"].values,
-            df["force"].values,
-            kind="linear",
-            bounds_error=False,
-            fill_value="extrapolate"
-        )
+        # 単調増加（ヒステリシスなし）かチェック
+        is_monotonic = df["displacement"].is_monotonic_increasing
         
-        # 新しいグリッド
-        x_new = np.linspace(
-            df["displacement"].min(),
-            df["displacement"].max(),
-            num_points
-        )
-        y_new = interp_func(x_new)
-        
-        return pd.DataFrame({
-            "displacement": x_new,
-            "force": y_new
-        })
+        if is_monotonic:
+            # 既存の単純リサンプリング
+            interp_func = interpolate.interp1d(
+                df["displacement"].values,
+                df["force"].values,
+                kind="linear",
+                bounds_error=False,
+                fill_value="extrapolate"
+            )
+            
+            x_new = np.linspace(
+                df["displacement"].min(),
+                df["displacement"].max(),
+                num_points
+            )
+            y_new = interp_func(x_new)
+            
+            return pd.DataFrame({
+                "displacement": x_new,
+                "force": y_new
+            })
+        else:
+            # ヒステリシス（往復）あり -> 分離してリサンプリング
+            logger.debug("ヒステリシス検知: 行きと帰りを分離してリサンプリングします")
+            load, unload = self.split_cycle(df)
+            
+            if load is None:
+                 raise ValueError("リサンプリング失敗: Loadingパートが見つかりません")
+
+            # 点数を分配 (Loading/Unloadingの長さに応じて、または単純に分割)
+            # ここでは各フェーズのデータ点数比率で配分
+            total_len = len(df)
+            n_load = max(2, int(num_points * len(load) / total_len))
+            
+            # Loadingリサンプリング
+            # 行き：0 -> Max
+            interp_load = interpolate.interp1d(
+                load["displacement"].values,
+                load["force"].values,
+                kind="linear",
+                bounds_error=False,
+                fill_value="extrapolate"
+            )
+            x_load = np.linspace(
+                load["displacement"].min(),
+                load["displacement"].max(),
+                n_load
+            )
+            y_load = interp_load(x_load)
+            
+            # Unloadingリサンプリング (存在する場合)
+            if unload is not None and len(unload) > 1:
+                n_unload = max(2, num_points - n_load)
+                
+                # 帰り：Max -> 0 (データ順序はそのまま使用)
+                # interp1dはxがソートされている必要があるため、sortして補間関数作成
+                # ただしUnloadingは変位が減少していくので、一度sortしてinterp作成し、
+                # 評価点を逆順(Max -> 0)に生成する
+                
+                un_disp = unload["displacement"].values
+                un_force = unload["force"].values
+                
+                # sort for interp1d
+                idx_sort = np.argsort(un_disp)
+                interp_unload = interpolate.interp1d(
+                    un_disp[idx_sort],
+                    un_force[idx_sort],
+                    kind="linear",
+                    bounds_error=False,
+                    fill_value="extrapolate"
+                )
+                
+                # Evaluation points: Max -> Min (to preserve order)
+                x_unload = np.linspace(
+                    unload["displacement"].max(),
+                    unload["displacement"].min(), # Descending
+                    n_unload
+                )
+                y_unload = interp_unload(x_unload)
+                
+                # 接合 (x_loadの最後とx_unloadの最初は共にMax付近だが、念のためそのまま結合)
+                x_final = np.concatenate([x_load, x_unload])
+                y_final = np.concatenate([y_load, y_unload])
+            else:
+                x_final = x_load
+                y_final = y_load
+            
+            return pd.DataFrame({
+                "displacement": x_final,
+                "force": y_final
+            })
     
     def process_target_curve(
         self,

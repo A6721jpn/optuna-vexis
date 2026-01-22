@@ -74,8 +74,10 @@ class ResultLoader:
             "force": pd.to_numeric(df[force_col], errors="coerce")
         })
         
-        result = result.dropna()
-        result = result.sort_values("displacement").reset_index(drop=True)
+        result = result.dropna().reset_index(drop=True)
+        
+        # 重複平均化とソートを削除（往復分離のため）
+        # result = result.sort_values("displacement").reset_index(drop=True)
         
         logger.debug(f"データ点数: {len(result)}")
         
