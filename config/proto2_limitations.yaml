@@ -6,7 +6,7 @@
 base_material: "Ogden_Rubber_v1"
 
 # 最適化範囲（現在値からのパーセンテージ）
-range_percent: 60  # ±60%
+range_percent: 20  # ±20%
 
 # 最適化モード: "elastic_only" | "visco_only" | "all"
 # - elastic_only: c, m のみ最適化（弾性係数）

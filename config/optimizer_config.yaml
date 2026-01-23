@@ -4,30 +4,36 @@
 
 optimization:
   # サンプラー:
-  # - "TPE": ベイズ最適化（推奨・デフォルト）。単一目的または多目的（重み付き和など）に有効。
-  # - "NSGAII": 多目的最適化専用（パレート解探索用）。objective_type: "multi" の場合に推奨。
-  # - "GP": ガウス過程（実験的）。
+  # - "AUTO": OptunaHub AutoSampler（推奨）。サンプラーと初期探索を自動選択。
+  # - "TPE": ベイズ最適化。単一目的または多目的に有効。
+  # - "NSGAII": 多目的最適化専用（パレート解探索用）。
+  # - "GP": ガウス過程（実験的）。目的関数は4つ以下にするほうが良い。
+  # - "CMA-ES": 共分散行列適応進化戦略。連続値の最適化に強力（実験的）。
   # - "RANDOM": ランダム探索。
-  sampler: "GP"
+  sampler: "AUTO"
   
   # 最大試行回数
-  max_trials: 50
+  max_trials: 200
   
   # 収束判定: この残差以下で終了
   convergence_threshold: 0.001
+
+  # 改善が見られない場合の許容回数 (Early Stopping)
+  # 指定回数連続でベストスコアが更新されない場合、最適化を終了します
+  patience: 100
   
   # 乱数シード（再現性のため）
   seed: 42
   
   # 初期探索（ランダム探索）の回数
-  # デフォルト: 10（推奨値: 5〜20程度）
-  # ゼロを指定すると初期探索なしで最初からモデルを使用
-  n_startup_trials: 10
+  # ※ sampler: "AUTO" の場合は無視されます（AutoSamplerが自動判断）
+  # 他のサンプラーを使用する場合のみ有効
+  n_startup_trials: 70
   
   # 目的関数タイプ: "single" | "multi"
   # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
-  # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはNSGAII推奨。
-  objective_type: "single"
+  # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはGP,TPE,NSGAII推奨。
+  objective_type: "multi"
   
   # 係数の離散化ステップ（オプション）
   # CAEソフトの有効数字制限に合わせて離散値にする

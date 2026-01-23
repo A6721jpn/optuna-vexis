@@ -164,6 +164,7 @@ def main() -> int:
         # 最大試行回数
         max_trials = args.max_trials or opt_config.get("max_trials", 100)
         convergence_threshold = opt_config.get("convergence_threshold", 0.01)
+        patience = opt_config.get("patience", 20)
         
         # 係数範囲設定
         range_percent = limits.get("range_percent", 60)
@@ -233,8 +234,15 @@ def main() -> int:
         target_features = result_loader.extract_features(target_curve, feature_config) if use_features else {}
         if use_features:
             logger.info(f"ターゲット特徴量: {target_features}")
+            # 多目的最適化の場合、各特徴量の誤差も目的関数に追加
+            # 順序: RMSE, Feat1_Error, Feat2_Error, ...
+            feature_keys = sorted(target_features.keys())
+            n_objectives = 1 + len(feature_keys)
+            opt_config["directions"] = ["minimize"] * n_objectives
+            logger.info(f"多目的最適化設定: 目的関数数={n_objectives} (RMSE + {feature_keys})")
         else:
             logger.info("目的関数: RMSEのみ（特徴量抽出OFF）")
+            opt_config["directions"] = ["minimize"]
         
         # 目的関数計算器
         obj_calculator = ObjectiveCalculator(target_curve, target_features, obj_config)
@@ -260,7 +268,7 @@ def main() -> int:
         optimizer.create_study("proto2_material_optimization")
         
         # 収束コールバック
-        callbacks = [ConvergenceCallback(convergence_threshold)]
+        callbacks = [ConvergenceCallback(convergence_threshold, patience=patience)]
         
         # 試行カウンタ（既存の試行数から開始）
         trial_count = optimizer.get_n_trials()
@@ -346,7 +354,16 @@ def main() -> int:
                 rmse = objectives["rmse"]
                 logger.info(f"Trial {current_trial_num} Finished. RMSE: {rmse:.6f}")
                 
-                return rmse
+                if use_features:
+                    # 多目的の場合、RMSEと各特徴量誤差を返す
+                    # 特徴量誤差のキーは "{feature_name}_error"
+                    ret_vals = [rmse]
+                    for key in sorted(target_features.keys()):
+                        err_key = f"{key}_error"
+                        ret_vals.append(objectives.get(err_key, float("inf")))
+                    return tuple(ret_vals)
+                else:
+                    return rmse
                 
             except FatalOptimizationError as e:
                 logger.critical(f"致命的なエラーが発生しました: {e}")

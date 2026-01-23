@@ -49,7 +49,14 @@ class Visualizer:
             return
             
         trial_numbers = [t.number for t in trials]
-        values = [t.value for t in trials]
+        # 多目的最適化対応: 最初の目的関数(RMSE)を使用
+        try:
+            values = [t.value for t in trials]
+        except RuntimeError:
+            values = [t.values[0] for t in trials if t.values]
+
+        if not values:
+            return
         
         # Best Valueの推移を計算
         best_values = []

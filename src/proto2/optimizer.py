@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional, Any
 
 import optuna
-from optuna.samplers import TPESampler, RandomSampler, QMCSampler
+from optuna.samplers import TPESampler, RandomSampler, QMCSampler, CmaEsSampler
 from optuna.study import Study
 from optuna.trial import Trial
 
@@ -27,6 +27,15 @@ try:
     HAS_NSGAII = True
 except ImportError:
     HAS_NSGAII = False
+
+# AutoSampler from OptunaHub
+try:
+    import optunahub
+    _auto_sampler_module = optunahub.load_module(package="samplers/auto_sampler")
+    AutoSampler = _auto_sampler_module.AutoSampler
+    HAS_AUTO_SAMPLER = True
+except Exception:
+    HAS_AUTO_SAMPLER = False
 
 
 logger = logging.getLogger(__name__)
@@ -84,15 +93,26 @@ class Optimizer:
         sampler_name = config.get("sampler", "TPE").upper()
         self._sampler = self._create_sampler(sampler_name)
         
-        # 単一目的最適化
-        self._directions = ["minimize"]
+        # 最適化方向
+        self._directions = config.get("directions", ["minimize"])
+        # configにdirectionsがない場合、objective_typeから推測も可能だが、
+        # main.pyから明示的に渡されることを想定するか、ここでデフォルトを設定
         
-        logger.info(f"Optimizer初期化: sampler={type(self._sampler).__name__}, mode={mode}")
+        logger.info(f"Optimizer初期化: sampler={type(self._sampler).__name__}, mode={mode}, directions={self._directions}")
     
     def _create_sampler(self, name: str) -> Any:
-        """サンプラーを作成（初期探索はSobol、以降は指定サンプラー）"""
+        """サンプラーを作成"""
         seed = self.config.get("seed")
         n_startup = self.config.get("n_startup_trials", 10)
+        
+        # AUTO の場合は OptunaHub の AutoSampler を使用（初期探索も自動）
+        if name == "AUTO":
+            if HAS_AUTO_SAMPLER:
+                logger.info("AutoSamplerを使用します（サンプラー・初期探索は自動選択）")
+                return AutoSampler(seed=seed)
+            else:
+                logger.warning("AutoSamplerが利用不可。TPESamplerを使用します。")
+                return TPESampler(seed=seed)
         
         # 現在の試行数を取得して、初期探索期間か判定
         current_trials = 0
@@ -147,6 +167,9 @@ class Optimizer:
                 return TPESampler(seed=seed, n_startup_trials=0)
         elif name == "RANDOM":
             return RandomSampler(seed=seed)
+        elif name in ["CMA-ES", "CMAES"]:
+            logger.info("CmaEsSamplerを使用します（注意: 独立サンプリング警告が出る可能性があります）")
+            return CmaEsSampler(seed=seed, n_startup_trials=0)
         else:
             logger.warning(f"未知のサンプラー: {name}。TPESamplerを使用します。")
             return TPESampler(seed=seed, n_startup_trials=0)
@@ -156,7 +179,7 @@ class Optimizer:
         self._study = optuna.create_study(
             study_name=study_name,
             sampler=self._sampler,
-            direction=self._directions[0],
+            directions=self._directions,
             storage=self._storage,
             load_if_exists=True
         )
@@ -310,6 +333,18 @@ class Optimizer:
             best_trial_params = self._study.best_params
         except ValueError:
             return None
+        except RuntimeError:
+            # 多目的最適化の場合、best_paramsは定義されない
+            # パレートフロントの最初の解を返すか、Noneを返す
+            # ここでは「パレート解の1つ」として、0番目のトライアルを返す（簡易的な対応）
+            try:
+                best_trials = self._study.best_trials
+                if best_trials:
+                    best_trial_params = best_trials[0].params
+                else:
+                    return None
+            except Exception:
+                return None
         
         # 対象係数を決定
         if self.mode == "elastic_only":
@@ -349,6 +384,17 @@ class Optimizer:
             return self._study.best_value
         except ValueError:
             return None
+        except RuntimeError:
+            # 多目的最適化の場合
+            try:
+                best_trials = self._study.best_trials
+                if best_trials:
+                    # 最初の解の値を返す（タプル）
+                    return best_trials[0].values
+                else:
+                    return None
+            except Exception:
+                return None
     
     def get_n_trials(self) -> int:
         """完了した試行数を取得"""
@@ -392,8 +438,17 @@ class ConvergenceCallback:
         self._no_improvement_count = 0
     
     def __call__(self, study: Study, trial: optuna.trial.FrozenTrial) -> None:
-        current_value = trial.value
-        
+        # 多目的最適化対応
+        try:
+            current_value = trial.value
+        except RuntimeError:
+            # 多目的の場合、trial.valueはエラーになる
+            # 収束判定は第一目的関数（RMSE）のみで行うことにする
+            if trial.values:
+                current_value = trial.values[0]
+            else:
+                return
+
         if current_value is None:
             return
         
