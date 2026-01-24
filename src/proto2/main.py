@@ -473,7 +473,13 @@ def main() -> int:
         logger.info("=" * 60)
         logger.info("Proto2 最適化完了")
         logger.info(f"試行回数: {summary['total_trials']}")
-        logger.info(f"最良RMSE: {summary['best_rmse']:.6f}")
+        best_rmse_val = summary['best_rmse']
+        if isinstance(best_rmse_val, (list, tuple)):
+            best_rmse_val = best_rmse_val[0] if best_rmse_val else None
+        if best_rmse_val is not None:
+            logger.info(f"最良RMSE: {best_rmse_val:.6f}")
+        else:
+            logger.info(f"最良RMSE: N/A")
         logger.info(f"収束達成: {summary['convergence_achieved']}")
         if best_params:
             logger.info("最良OGDEN係数:")
