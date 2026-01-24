@@ -407,6 +407,11 @@ class Optimizer:
         best_value = self.get_best_value()
         if best_value is None:
             return False
+        # 多目的最適化の場合、リスト/タプルで返されるので最初の値（RMSE）を使用
+        if isinstance(best_value, (list, tuple)):
+            best_value = best_value[0] if best_value else None
+            if best_value is None:
+                return False
         return best_value <= threshold
     
     def get_study_summary(self, base_params: dict) -> dict:
