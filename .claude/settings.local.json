@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(.venvScriptspython.exe -m pytest --version)",
+      "Bash(C:\\\\github_repo\\\\optuna-for-vexis\\\\.venv\\\\Scripts\\\\python.exe -m pytest:*)",
+      "Bash(cmd /c \"C:\\\\github_repo\\\\optuna-for-vexis\\\\.venv\\\\Scripts\\\\python.exe -m pytest --version\")",
+      "Bash(cmd /c \"C:\\\\github_repo\\\\optuna-for-vexis\\\\.venv\\\\Scripts\\\\python.exe -c \"\"import sklearn; print\\(sklearn.__version__\\)\"\"\")",
+      "Bash(cmd /c \"C:\\\\github_repo\\\\optuna-for-vexis\\\\.venv\\\\Scripts\\\\python.exe -c \"\"import joblib; print\\(joblib.__version__\\)\"\"\")",
+      "Bash(powershell:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(py -3.12 -m pytest:*)",
+      "Bash(where:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(git submodule:*)"
+    ]
+  }
+}

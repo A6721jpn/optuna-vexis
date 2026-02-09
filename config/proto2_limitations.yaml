@@ -21,7 +21,7 @@ cae_stroke_range:
   max: 1.4  # mm
 
 # 入力STEPファイル（固定形状）
-input_step: "example_1.stp"
+input_step: "example_2.stp"
 
 # 各係数の追加制約（オプション）
 constraints:

@@ -1,0 +1,44 @@
+# =============================================================
+# Proto4 CAD Feasibility-Gated Optimization 制限設定
+# =============================================================
+
+freecad:
+  fcstd_path: "input/model.FCStd"
+  sketch_name: "Sketch001"
+  constraints:
+    width:
+      min: 10.0
+      max: 20.0
+    height:
+      min: 5.0
+      max: 12.0
+  step_output_dir: "input/step"
+  step_filename_template: "proto4_trial_{trial_id}.step"
+  timeout_sec: 300
+
+cad_gate:
+  # ML feasibility predictor settings
+  # model_path: "models/cad_feasibility.joblib"
+  model_path: null
+  threshold: 0.5
+  enabled: true
+
+  # FeasibilityAwareSampler: MLモデルがロードされている場合、
+  # サンプラーレベルでinfeasibleなパラメータを棄却する最大リトライ回数。
+  # feasible領域が狭い場合は大きくする（ただし探索が遅くなる）。
+  rejection_max_retries: 50
+
+cae:
+  stroke_range:
+    min: 0.0
+    max: 0.5
+  timeout_sec: 600
+  max_retries: 1
+
+penalty:
+  base_penalty: 50.0
+  alpha: 10.0
+  failure_weights:
+    cad_infeasible: 1.0
+    constraint_violation: 1.0
+    cae_fail: 0.6

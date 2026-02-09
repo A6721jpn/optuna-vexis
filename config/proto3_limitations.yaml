@@ -1,0 +1,32 @@
+﻿# =============================================================
+# Proto3 FreeCAD寸法最適化 制限設定（雛形）
+# =============================================================
+
+freecad:
+  fcstd_path: "input/model.FCStd"
+  sketch_name: "Sketch001"
+  constraints:
+    width:
+      min: 10.0
+      max: 20.0
+    height:
+      min: 5.0
+      max: 12.0
+  step_output_dir: "input/step"
+  step_filename_template: "proto3_trial_{trial_id}.step"
+  timeout_sec: 300
+
+cae:
+  stroke_range:
+    min: 0.0
+    max: 0.5
+
+penalty:
+  base_penalty: 50.0
+  alpha: 10.0
+  failure_weights:
+    sketch_failed: 1.0
+    step_missing: 0.8
+    vexis_failed: 0.6
+    result_missing: 0.6
+

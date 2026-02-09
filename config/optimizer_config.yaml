@@ -33,7 +33,7 @@ optimization:
   # 目的関数タイプ: "single" | "multi"
   # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
   # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはGP,TPE,NSGAII推奨。
-  objective_type: "multi"
+  objective_type: "single"
   
   # 係数の離散化ステップ（オプション）
   # CAEソフトの有効数字制限に合わせて離散値にする
@@ -45,7 +45,7 @@ objective:
   # 目的関数タイプ
   # "rmse": カーブ全体のRMSE
   # "multi": RMSE + 特徴量の重み付け
-  type: "multi"
+  type: "rmse"
   
   # 多目的最適化時の重み
   weights:
@@ -93,7 +93,7 @@ logging:
 
 paths:
   # ターゲットカーブファイル（inputフォルダ内のマスターカーブ）
-  target_curve: "input/example_2_tgt.csv"
+  target_curve: "input/example_2_tgt_adj.csv"
   
   # 入力STEPファイルディレクトリ
   input_dir: "input"
