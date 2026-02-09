@@ -1,31 +1,108 @@
 # =============================================================
-# Proto4 CAD Feasibility-Gated Optimization 制限設定
+# Proto4 CAD Feasibility-Gated Optimization 制限設定 (20次元)
 # =============================================================
 
 freecad:
   fcstd_path: "input/model.FCStd"
   sketch_name: "Sketch001"
+  surface_name: "Face"
+  surface_label: "SURFACE"
+  
+  # 20次元パラメータ（ai-v0 SafetyPredictor対応）
+  # 各パラメータは基準値に対する比率 (1.0 = 基準値)
   constraints:
-    width:
-      min: 10.0
-      max: 20.0
-    height:
-      min: 5.0
-      max: 12.0
+    CROWN-D-L:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    CROWN-D-H:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    CROWN-W:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    PUSHER-D-H:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    PUSHER-D-L:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    TIP-D:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    STROKE-OUT:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    STROKE-CENTER:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    FOOT-W:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    FOOT-MID:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    SHOULDER-ANGLE-OUT:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    SHOULDER-ANGLE-IN:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    TOP-T:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    TOP-DROP:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    FOOT-IN:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    DIAMETER:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    HEIGHT:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    TIP-DROP:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    SHOUDER-T:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+    FOOT-OUT:
+      min: 0.8
+      max: 1.2
+      base_value: 1.0
+
   step_output_dir: "input/step"
   step_filename_template: "proto4_trial_{trial_id}.step"
   timeout_sec: 300
 
 cad_gate:
-  # ML feasibility predictor settings
-  # model_path: "models/cad_feasibility.joblib"
-  model_path: null
+  # ai-v0 SafetyPredictor directory (contains model.joblib + scaler.joblib)
+  model_path: "C:/github_repo/cad_automaton/src/ai-v0/artifacts_optuna_100"
   threshold: 0.5
   enabled: true
 
-  # FeasibilityAwareSampler: MLモデルがロードされている場合、
-  # サンプラーレベルでinfeasibleなパラメータを棄却する最大リトライ回数。
-  # feasible領域が狭い場合は大きくする（ただし探索が遅くなる）。
+  # FeasibilityAwareSampler: 最大リトライ回数
   rejection_max_retries: 50
 
 cae:

@@ -80,6 +80,8 @@ class PathsSpec:
 class FreecadSpec:
     fcstd_path: str = "input/model.FCStd"
     sketch_name: str = "Sketch001"
+    surface_name: str = "Face"
+    surface_label: str = "SURFACE"
     constraints: dict[str, dict[str, float]] = field(default_factory=dict)
     step_output_dir: str = "input/step"
     step_filename_template: str = "proto4_trial_{trial_id}.step"
@@ -155,6 +157,8 @@ def load_config(
     freecad = FreecadSpec(
         fcstd_path=fc_raw.get("fcstd_path", "input/model.FCStd"),
         sketch_name=fc_raw.get("sketch_name", "Sketch001"),
+        surface_name=fc_raw.get("surface_name", "Face"),
+        surface_label=fc_raw.get("surface_label", "SURFACE"),
         constraints=constraints_raw,
         step_output_dir=fc_raw.get("step_output_dir", "input/step"),
         step_filename_template=fc_raw.get(

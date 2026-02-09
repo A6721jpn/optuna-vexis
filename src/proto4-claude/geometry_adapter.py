@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .config import FreecadSpec
 from .types import DesignPoint
@@ -29,12 +29,43 @@ class GeometryAdapter:
         self._project_root = project_root
         self._fcstd_path = project_root / spec.fcstd_path
         self._step_output_dir = project_root / spec.step_output_dir
+        self._engine: Optional[Any] = None
+
+    def _get_engine(self):
+        """Lazy-load FreecadEngine."""
+        if self._engine is not None:
+            return self._engine
+
+        from .freecad_engine import FreecadEngine, ConstraintSpec
+
+        # Build constraint specs from config
+        specs = []
+        for idx, (name, constraint) in enumerate(self._spec.constraints.items()):
+            spec = ConstraintSpec(
+                index=idx,
+                name=name,
+                ctype="Distance",  # Default to Distance; real impl needs mapping
+                base_value=constraint.get("base_value", 1.0),
+            )
+            specs.append(spec)
+
+        engine = FreecadEngine(
+            fcstd_path=self._fcstd_path,
+            sketch_name=self._spec.sketch_name,
+            surface_name=getattr(self._spec, "surface_name", "Face"),
+            surface_label=getattr(self._spec, "surface_label", "SURFACE"),
+        )
+        engine.open()
+        engine.set_constraints(specs)
+        self._engine = engine
+        return engine
 
     def generate_step(self, point: DesignPoint) -> Path:
         """Update FreeCAD constraints and export STEP.
 
         Args:
             point: Design point whose params map to sketch constraint names.
+                   Params are ratio values (1.0 = baseline).
 
         Returns:
             Path to the exported STEP file.
@@ -50,15 +81,29 @@ class GeometryAdapter:
 
         step_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # TODO: integrate cad-automaton / FreeCAD headless
-        #   1. Open FCStd
-        #   2. Update sketch constraints from point.params
-        #   3. Export STEP to step_path
-        #   4. Validate exported file
-        raise GeometryError(
-            "GeometryAdapter is not implemented yet — "
-            "wire cad-automaton here"
-        )
+        try:
+            engine = self._get_engine()
+
+            # Apply ratio values from DesignPoint
+            if not engine.apply_ratios(point.params):
+                raise GeometryError(
+                    f"FreeCAD recompute failed for trial {point.trial_id}"
+                )
+
+            # Export STEP
+            engine.export_step(step_path)
+
+            # Validate exported file
+            if not step_path.exists() or step_path.stat().st_size == 0:
+                raise GeometryError(f"STEP export failed: empty or missing {step_path}")
+
+            logger.info("Generated STEP for trial %d: %s", point.trial_id, step_path)
+            return step_path
+
+        except GeometryError:
+            raise
+        except Exception as exc:
+            raise GeometryError(f"FreeCAD error for trial {point.trial_id}: {exc}") from exc
 
     def cleanup(self, point: DesignPoint) -> None:
         """Remove temporary STEP file for the given trial."""
@@ -67,3 +112,10 @@ class GeometryAdapter:
         if step_path.exists():
             step_path.unlink()
             logger.debug("Cleaned up STEP: %s", step_path)
+
+    def close(self) -> None:
+        """Close FreeCAD engine if open."""
+        if self._engine is not None:
+            self._engine.close()
+            self._engine = None
+
