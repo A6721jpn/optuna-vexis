@@ -1,3 +1,7 @@
 [submodule "vexis"]
 	path = vexis
 	url = https://github.com/A6721jpn/vexis.git
+[submodule "cad-automaton"]
+	path = cad-automaton
+	url = https://github.com/A6721jpn/cad-automaton
+	branch = main
