@@ -1,0 +1,1 @@
+C:\Users\aokuni\AppData\Local\miniforge3\envs\fcad\python.exe: Error while finding module specification for 'proto4_claude.runner' (ModuleNotFoundError: No module named 'proto4_claude')
