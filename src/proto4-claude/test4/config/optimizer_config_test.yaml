@@ -1,0 +1,40 @@
+optimization:
+  max_trials: 2
+  convergence_threshold: 0.05
+  patience: 10
+  seed: 42
+  sampler: "TPE"
+  discretization_step: 0.001
+  n_jobs: 1
+  objective_type: "single"
+
+cad_gate:
+  enabled: false
+  model_path: "models/cad_gate_rf.pkl"
+  rejection_max_retries: 10
+
+freecad:
+  template_path: "input/model.FCStd"
+  output_dir: "input/step"
+  frizzy_path: "ref-fcad/frizzy_2d_lines.py"
+  param_unit: "ratio"
+
+cae:
+  timeout_sec: 0
+  max_retries: 1
+  stroke_range:
+    min: 0.0
+    max: 0.5
+  stream_stdout: true
+  stdout_log_dir: "output/logs/vexis_test"
+
+objective:
+  weights:
+    rmse_loading: 1.0
+    rmse_unloading: 1.0
+  features: {}
+
+paths:
+  result_dir: "output/trials_test"
+  vexis_path: "vexis/vexis_run.py"
+  target_curve: "tgt/target_curve.csv"

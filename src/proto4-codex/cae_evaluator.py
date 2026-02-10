@@ -170,6 +170,8 @@ class CaeEvaluator:
         self._target_features = target_features
         self._current_proc: Optional[subprocess.Popen] = None
         self._stop_requested = False
+        self._stdout_logger = None
+        self._stdout_log_dir: Optional[Path] = None
 
         if not self._vexis_root.exists():
             raise FileNotFoundError(f"VEXIS not found: {self._vexis_root}")
@@ -177,6 +179,9 @@ class CaeEvaluator:
         self._vexis_input = self._vexis_root / "input"
         self._vexis_results = self._vexis_root / "results"
         self._vexis_main = self._vexis_root / "main.py"
+
+        if self._cae_spec.stdout_log_dir:
+            self._stdout_log_dir = Path(self._cae_spec.stdout_log_dir)
 
         # Pre-split target curve
         self._tgt_load, self._tgt_unload = split_cycle(target_curve)
@@ -301,6 +306,7 @@ class CaeEvaluator:
         logger.info("VEXIS run: %s", " ".join(cmd))
 
         error_detected = False
+        stdout_fh = None
         try:
             creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             env = os.environ.copy()
@@ -310,6 +316,11 @@ class CaeEvaluator:
                 "VTK_DEFAULT_OPENGL_WINDOW": "vtkOSOpenGLRenderWindow",
                 "PYVISTA_OFF_SCREEN": "true",
             })
+
+            if self._stdout_log_dir:
+                self._stdout_log_dir.mkdir(parents=True, exist_ok=True)
+                stdout_path = self._stdout_log_dir / f"{job_name}_vexis.log"
+                stdout_fh = open(stdout_path, "w", encoding="utf-8")
 
             proc = subprocess.Popen(
                 cmd,
@@ -342,7 +353,15 @@ class CaeEvaluator:
                 if "error termination" in low or "fatal error" in low:
                     error_detected = True
                     logger.warning("VEXIS error detected: %s", line.rstrip())
-                logger.debug(line.rstrip())
+                msg = line.rstrip()
+                logger.debug(msg)
+                if stdout_fh:
+                    stdout_fh.write(msg + "\n")
+                if self._cae_spec.stream_stdout:
+                    level_name = self._cae_spec.stdout_console_level.upper()
+                    level = getattr(logging, level_name, logging.INFO)
+                    if logger.isEnabledFor(level):
+                        logger.log(level, "VEXIS: %s", msg)
 
             proc.wait()
 
@@ -353,6 +372,8 @@ class CaeEvaluator:
             logger.error("VEXIS execution error: %s", exc)
             return None
         finally:
+            if stdout_fh:
+                stdout_fh.close()
             self._current_proc = None
 
         result_csv = self._vexis_results / f"{job_name}_result.csv"

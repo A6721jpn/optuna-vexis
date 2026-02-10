@@ -46,6 +46,9 @@ class CaeSpec:
     stroke_range_max: float = 0.5
     timeout_sec: int = 600
     max_retries: int = 1
+    stream_stdout: bool = False
+    stdout_log_dir: Optional[str] = None
+    stdout_console_level: str = "INFO"
 
 
 @dataclass
@@ -66,6 +69,12 @@ class ObjectiveSpec:
     type: str = "rmse"
     weights: dict[str, float] = field(default_factory=lambda: {"rmse": 1.0})
     features: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
+class LoggingSpec:
+    level: str = "INFO"
+    output_dir: str = "output/logs"
 
 
 @dataclass
@@ -94,6 +103,7 @@ class Proto4Config:
 
     optimization: OptimizationSpec = field(default_factory=OptimizationSpec)
     objective: ObjectiveSpec = field(default_factory=ObjectiveSpec)
+    logging: LoggingSpec = field(default_factory=LoggingSpec)
     paths: PathsSpec = field(default_factory=PathsSpec)
     freecad: FreecadSpec = field(default_factory=FreecadSpec)
     cad_gate: CadGateSpec = field(default_factory=CadGateSpec)
@@ -151,6 +161,13 @@ def load_config(
         vexis_path=paths_raw.get("vexis_path", "vexis"),
     )
 
+    # --- Logging ---
+    log_raw = raw_opt.get("logging", {})
+    logging_spec = LoggingSpec(
+        level=log_raw.get("level", "INFO"),
+        output_dir=log_raw.get("output_dir", "output/logs"),
+    )
+
     # --- FreeCAD ---
     fc_raw = raw_lim.get("freecad", {})
     constraints_raw = fc_raw.get("constraints", {})
@@ -184,6 +201,9 @@ def load_config(
         stroke_range_max=float(sr.get("max", 0.5)),
         timeout_sec=int(cae_raw.get("timeout_sec", 600)),
         max_retries=int(cae_raw.get("max_retries", 1)),
+        stream_stdout=bool(cae_raw.get("stream_stdout", False)),
+        stdout_log_dir=cae_raw.get("stdout_log_dir"),
+        stdout_console_level=cae_raw.get("stdout_console_level", "INFO"),
     )
 
     # --- Penalty ---
@@ -203,6 +223,7 @@ def load_config(
     cfg = Proto4Config(
         optimization=optimization,
         objective=objective,
+        logging=logging_spec,
         paths=paths,
         freecad=freecad,
         cad_gate=cad_gate,

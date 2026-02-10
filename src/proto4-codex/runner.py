@@ -129,18 +129,24 @@ def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parent.parent.parent
 
-    log_dir = project_root / "output" / "logs"
-    _setup_logging(log_dir, level="DEBUG" if args.verbose else "INFO")
-
     start_time = datetime.now()
-    logger.info("Proto4 optimization start")
-
     try:
         cfg = load_config(
             project_root / args.config,
             project_root / args.limits,
         )
+    except Exception as exc:
+        logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+        logger.exception("Failed to load config: %s", exc)
+        return 1
 
+    log_dir = project_root / cfg.logging.output_dir
+    log_level = "DEBUG" if args.verbose else cfg.logging.level
+    _setup_logging(log_dir, level=log_level)
+
+    logger.info("Proto4 optimization start")
+
+    try:
         max_trials = args.max_trials or cfg.optimization.max_trials
 
         # Directions

@@ -109,8 +109,11 @@ cae:
   stroke_range:
     min: 0.0
     max: 0.5
-  timeout_sec: 600
+  timeout_sec: 0
   max_retries: 1
+  stream_stdout: true
+  stdout_log_dir: "output/logs/vexis"
+  stdout_console_level: "INFO"
 
 penalty:
   base_penalty: 50.0

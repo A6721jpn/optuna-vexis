@@ -338,11 +338,14 @@ class CaeEvaluator:
             for line in proc.stdout:
                 if self._stop_requested:
                     break
+                
                 low = line.lower()
                 if "error termination" in low or "fatal error" in low:
                     error_detected = True
-                    logger.warning("VEXIS error detected: %s", line.rstrip())
-                logger.debug(line.rstrip())
+                    logger.error("VEXIS error detected: %s", line.rstrip())
+                
+                # Always log INFO to show progress in console
+                logger.info(line.rstrip())
 
             proc.wait()
 
@@ -353,6 +356,9 @@ class CaeEvaluator:
             logger.error("VEXIS execution error: %s", exc)
             return None
         finally:
+            # Ensure process is killed if still running (e.g. on exception)
+            if self._current_proc:
+                self._terminate(self._current_proc)
             self._current_proc = None
 
         result_csv = self._vexis_results / f"{job_name}_result.csv"

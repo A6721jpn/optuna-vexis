@@ -40,16 +40,19 @@ def _get_freecad():
         "CONDA_PREFIX",
         r"C:\Users\aokuni\AppData\Local\miniforge3\envs\fcad",
     )
+    conda_prefixes = [p for p in os.environ.get("CONDA_PREFIXES", "").split(";") if p]
     env_candidates = []
     if conda_prefix:
         env_candidates.append(Path(conda_prefix))
     for name in ("fcad", "fcad-codex", "b123d"):
         env_candidates.append(Path(r"C:\Users\aokuni\AppData\Local\miniforge3\envs") / name)
+    for p in conda_prefixes:
+        env_candidates.append(Path(p))
 
     for env_path in env_candidates:
         freecad_bin = env_path / "Library" / "bin"
         freecad_lib = env_path / "Library" / "lib"
-        if not freecad_bin.exists():
+        if not freecad_bin.exists() and not freecad_lib.exists():
             continue
         os.environ["PATH"] = str(freecad_bin) + os.pathsep + os.environ.get("PATH", "")
         sys.path.insert(0, str(freecad_bin))
