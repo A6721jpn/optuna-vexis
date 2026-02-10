@@ -30,6 +30,7 @@ from .geometry_adapter import GeometryAdapter, GeometryError
 from .persistence import TrialPersistence
 from .search_space import FEASIBILITY_ATTR
 from .types import (
+    CaeResult,
     CaeStatus,
     DesignPoint,
     TrialOutcome,
@@ -37,6 +38,9 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+FAILURE_STAGE_ATTR = "proto4_failure_stage"
+FAILURE_REASON_ATTR = "proto4_failure_reason"
 
 
 class ObjectiveOrchestrator:
@@ -89,6 +93,11 @@ class ObjectiveOrchestrator:
             logger.exception("Unexpected error in trial %d: %s", point.trial_id, exc)
             record.outcome = TrialOutcome.CAE_FAIL
             self._store_feasibility(trial, 1.0)  # unknown → treat as infeasible
+            self._store_failure_context(
+                trial,
+                stage="objective_exception",
+                reason=f"{exc.__class__.__name__}: {exc}",
+            )
             result = self._penalty(point, TrialOutcome.CAE_FAIL)
         finally:
             record.wall_clock_sec = time.time() - t0
@@ -113,6 +122,37 @@ class ObjectiveOrchestrator:
         if trial is not None:
             trial.set_user_attr(FEASIBILITY_ATTR, violation)
 
+    @staticmethod
+    def _store_failure_context(
+        trial: Optional[optuna.trial.Trial],
+        *,
+        stage: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        if trial is None:
+            return
+        trial.set_user_attr(FAILURE_STAGE_ATTR, stage)
+        if reason:
+            trial.set_user_attr(FAILURE_REASON_ATTR, reason)
+
+    @staticmethod
+    def _cae_failure_violation(cae_result: CaeResult) -> float:
+        """Map CAE failure reason to feasibility violation severity."""
+        reason = (cae_result.failure_reason or "").lower()
+        if not reason:
+            return 0.8
+        if any(token in reason for token in (
+            "timeout",
+            "process_exit_",
+            "fatal",
+            "execution_error",
+            "subprocess_failed",
+        )):
+            return 1.0
+        if any(token in reason for token in ("result_load_failed", "result_csv_missing")):
+            return 0.9
+        return 0.8
+
     def _evaluate(
         self,
         point: DesignPoint,
@@ -127,6 +167,7 @@ class ObjectiveOrchestrator:
             logger.info("Trial %d: constraint violation — %s", point.trial_id, violation)
             record.outcome = TrialOutcome.CONSTRAINT_VIOLATION
             self._store_feasibility(trial, 1.0)
+            self._store_failure_context(trial, stage="hard_constraint", reason=violation)
             return self._penalty(point, TrialOutcome.CONSTRAINT_VIOLATION)
 
         # 2. CAD feasibility gate
@@ -141,6 +182,11 @@ class ObjectiveOrchestrator:
             )
             record.outcome = TrialOutcome.CAD_INFEASIBLE
             self._store_feasibility(trial, score)
+            self._store_failure_context(
+                trial,
+                stage="cad_gate",
+                reason=feas.reason_code,
+            )
             return self._penalty(point, TrialOutcome.CAD_INFEASIBLE)
 
         if dry_run:
@@ -156,20 +202,34 @@ class ObjectiveOrchestrator:
             logger.warning("Trial %d: geometry error — %s", point.trial_id, exc)
             record.outcome = TrialOutcome.CAD_INFEASIBLE
             self._store_feasibility(trial, 1.0)
+            self._store_failure_context(
+                trial,
+                stage="geometry_generation",
+                reason=str(exc),
+            )
             return self._penalty(point, TrialOutcome.CAD_INFEASIBLE)
 
         # 4. CAE evaluation — point was CAD-feasible
-        self._store_feasibility(trial, -1.0)  # feasible (<= 0)
-
         cae_result = self._cae.evaluate(step_path, point)
         record.cae_result = cae_result
 
         if cae_result.status != CaeStatus.SUCCESS:
-            logger.warning("Trial %d: CAE failed", point.trial_id)
+            logger.warning(
+                "Trial %d: CAE failed (%s)",
+                point.trial_id,
+                cae_result.failure_reason or "unknown",
+            )
             record.outcome = TrialOutcome.CAE_FAIL
+            self._store_feasibility(trial, self._cae_failure_violation(cae_result))
+            self._store_failure_context(
+                trial,
+                stage="cae_evaluation",
+                reason=cae_result.failure_reason,
+            )
             return self._penalty(point, TrialOutcome.CAE_FAIL)
 
         # 5. Success
+        self._store_feasibility(trial, -1.0)  # feasible (<= 0)
         record.outcome = TrialOutcome.CAE_SUCCESS
         record.objective_values = cae_result.metrics
 

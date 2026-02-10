@@ -98,9 +98,9 @@ freecad:
 
 cad_gate:
   # ai-v0 SafetyPredictor directory (contains model.joblib + scaler.joblib)
-  model_path: "C:/github_repo/cad_automaton/src/ai-v0/artifacts_optuna_100"
+  model_path: "input/cad_gate_model"
   threshold: 0.5
-  enabled: false
+  enabled: true
 
   # FeasibilityAwareSampler: 最大リトライ回数
   rejection_max_retries: 50
@@ -108,7 +108,7 @@ cad_gate:
 cae:
   stroke_range:
     min: 0.0
-    max: 0.5
+    max: 0.1
   timeout_sec: 0
   max_retries: 1
   stream_stdout: true

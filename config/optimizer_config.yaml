@@ -93,7 +93,7 @@ logging:
 
 paths:
   # ターゲットカーブファイル（inputフォルダ内のマスターカーブ）
-  target_curve: "input/example_2_tgt_adj.csv"
+  target_curve: "input/target_curve_generated.csv"
   
   # 入力STEPファイルディレクトリ
   input_dir: "input"

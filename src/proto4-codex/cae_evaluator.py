@@ -172,6 +172,7 @@ class CaeEvaluator:
         self._stop_requested = False
         self._stdout_logger = None
         self._stdout_log_dir: Optional[Path] = None
+        self._last_failure_reason: Optional[str] = None
 
         if not self._vexis_root.exists():
             raise FileNotFoundError(f"VEXIS not found: {self._vexis_root}")
@@ -182,6 +183,7 @@ class CaeEvaluator:
 
         if self._cae_spec.stdout_log_dir:
             self._stdout_log_dir = Path(self._cae_spec.stdout_log_dir)
+            self._stdout_log_dir.mkdir(parents=True, exist_ok=True)
 
         # Pre-split target curve
         self._tgt_load, self._tgt_unload = split_cycle(target_curve)
@@ -195,7 +197,8 @@ class CaeEvaluator:
     def evaluate(self, step_path: Path, point: DesignPoint) -> CaeResult:
         """Run full CAE evaluation pipeline with retry."""
         job_name = f"proto4_trial_{point.trial_id}"
-        retries = self._cae_spec.max_retries
+        retries = max(1, self._cae_spec.max_retries)
+        result = CaeResult(status=CaeStatus.FAIL, failure_reason="cae_not_started")
 
         for attempt in range(1, retries + 1):
             t0 = time.time()
@@ -207,7 +210,12 @@ class CaeEvaluator:
                 return result
 
             if attempt < retries:
-                logger.warning("CAE attempt %d/%d failed; retrying", attempt, retries)
+                logger.warning(
+                    "CAE attempt %d/%d failed (%s); retrying",
+                    attempt,
+                    retries,
+                    result.failure_reason or "unknown",
+                )
 
         return result  # last failed attempt
 
@@ -217,22 +225,37 @@ class CaeEvaluator:
 
     def _single_run(self, step_path: Path, job_name: str) -> CaeResult:
         """Execute one VEXIS run and compute metrics."""
+        self._last_failure_reason = None
         # Copy STEP to VEXIS input
         self._vexis_input.mkdir(parents=True, exist_ok=True)
         target_step = self._vexis_input / f"{job_name}.step"
         shutil.copy2(step_path, target_step)
 
+        # Ensure stale CSV from a previous run cannot be reused as success.
+        stale_csv = self._vexis_results / f"{job_name}_result.csv"
+        if stale_csv.exists():
+            try:
+                stale_csv.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove stale result CSV %s: %s", stale_csv, exc)
+
         # Run VEXIS subprocess
         result_csv = self._run_subprocess(job_name)
         if result_csv is None:
-            return CaeResult(status=CaeStatus.FAIL)
+            return CaeResult(
+                status=CaeStatus.FAIL,
+                failure_reason=self._last_failure_reason or "vexis_subprocess_failed",
+            )
 
         # Load and process result
         try:
             result_curve = load_curve(result_csv)
         except (FileNotFoundError, ValueError) as exc:
             logger.error("Failed to load result: %s", exc)
-            return CaeResult(status=CaeStatus.FAIL)
+            return CaeResult(
+                status=CaeStatus.FAIL,
+                failure_reason=f"result_load_failed:{exc.__class__.__name__}",
+            )
 
         trimmed = extract_range(
             result_curve,
@@ -243,7 +266,10 @@ class CaeEvaluator:
         # Compute metrics
         metrics = self._compute_metrics(trimmed)
         if metrics is None:
-            return CaeResult(status=CaeStatus.FAIL)
+            return CaeResult(
+                status=CaeStatus.FAIL,
+                failure_reason="metric_computation_failed",
+            )
 
         return CaeResult(
             status=CaeStatus.SUCCESS,
@@ -296,6 +322,7 @@ class CaeEvaluator:
 
     def _run_subprocess(self, job_name: str) -> Optional[Path]:
         self._stop_requested = False
+        self._last_failure_reason = None
         project_root = self._vexis_root.parent
         venv_py = project_root / ".venv" / "Scripts" / "python.exe"
         if not venv_py.exists():
@@ -306,6 +333,7 @@ class CaeEvaluator:
         logger.info("VEXIS run: %s", " ".join(cmd))
 
         error_detected = False
+        timeout_reached = False
         stdout_fh = None
         try:
             creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -338,9 +366,14 @@ class CaeEvaluator:
             timeout = self._cae_spec.timeout_sec
             if timeout and timeout > 0:
                 def _watcher():
+                    nonlocal timeout_reached
                     t0 = time.time()
                     while proc.poll() is None:
-                        if self._stop_requested or time.time() - t0 > timeout:
+                        if self._stop_requested:
+                            self._terminate(proc)
+                            return
+                        if time.time() - t0 > timeout:
+                            timeout_reached = True
                             self._terminate(proc)
                             return
                         time.sleep(1)
@@ -365,11 +398,19 @@ class CaeEvaluator:
 
             proc.wait()
 
-            if self._stop_requested or proc.returncode != 0:
+            if self._stop_requested:
+                self._last_failure_reason = "stop_requested"
+                return None
+            if timeout_reached:
+                self._last_failure_reason = f"timeout_after_{self._cae_spec.timeout_sec}s"
+                return None
+            if proc.returncode != 0:
+                self._last_failure_reason = f"process_exit_{proc.returncode}"
                 return None
 
         except Exception as exc:
             logger.error("VEXIS execution error: %s", exc)
+            self._last_failure_reason = f"execution_error:{exc.__class__.__name__}"
             return None
         finally:
             if stdout_fh:
@@ -382,7 +423,20 @@ class CaeEvaluator:
                 break
             time.sleep(0.5)
 
-        return result_csv if result_csv.exists() else None
+        if result_csv.exists():
+            if error_detected:
+                logger.warning(
+                    "VEXIS output contained fatal markers but result CSV exists: %s",
+                    result_csv,
+                )
+            return result_csv
+
+        self._last_failure_reason = (
+            "fatal_error_output_and_result_missing"
+            if error_detected
+            else "result_csv_missing"
+        )
+        return None
 
     def _terminate(self, proc: subprocess.Popen, timeout: int = 10) -> None:
         if proc.poll() is not None:

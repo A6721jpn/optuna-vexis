@@ -66,7 +66,25 @@ def _get_freecad():
         except ImportError:
             continue
 
-    raise ImportError("FreeCAD not found in any conda environment")
+    # Final fallback: explicit FreeCAD install path
+    fallback_bin = Path(
+        os.environ.get(
+            "FREECAD_BIN",
+            r"C:\Program Files\FreeCAD 1.0\bin",
+        )
+    )
+    if fallback_bin.exists():
+        os.environ["PATH"] = str(fallback_bin) + os.pathsep + os.environ.get("PATH", "")
+        sys.path.insert(0, str(fallback_bin))
+        try:
+            import FreeCAD  # type: ignore
+            _FreeCAD = FreeCAD
+            logger.info("FreeCAD loaded from %s", fallback_bin)
+            return _FreeCAD
+        except ImportError:
+            pass
+
+    raise ImportError("FreeCAD not found in any conda environment or fallback path")
 
 
 @dataclass

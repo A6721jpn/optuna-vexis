@@ -1,0 +1,22 @@
+﻿# Proto4 harness config
+
+optimizer: config/optimizer_config.yaml
+limits: config/proto4_limitations.yaml
+run_root: output/harness
+max_trials: 1
+
+# Steps
+generate_freecad: false
+run_vexis: false
+run_proto4: true
+
+# FreeCAD
+conda_env: fcad
+
+# VEXIS
+vexis_isolate_input: true
+vexis_skip_mesh: false
+vexis_skip_prompt: true
+
+# FreeCAD fallback
+freecad_bin: "C:/Program Files/FreeCAD 1.0/bin"

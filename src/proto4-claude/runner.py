@@ -155,6 +155,10 @@ def main() -> int:
         result_dir.mkdir(parents=True, exist_ok=True)
         storage_path = result_dir / "optuna_study_proto4.db"
         storage_url = f"sqlite:///{storage_path}"
+        
+        logger.info(f"Using config: {args.config}")
+        logger.info(f"Using limitations: {args.limits}")
+        logger.info(f"Storage URL: {storage_url}")
 
         # Target curve
         target_path = project_root / cfg.paths.target_curve

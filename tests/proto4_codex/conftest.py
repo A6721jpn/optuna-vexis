@@ -1,11 +1,11 @@
-﻿import sys
+﻿import importlib.util
+import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PKG_DIR = PROJECT_ROOT / "src" / "proto4-codex"
 
 if "proto4_codex" not in sys.modules:
-    import importlib.util
     spec = importlib.util.spec_from_file_location(
         "proto4_codex",
         str(PKG_DIR / "__init__.py"),
@@ -24,3 +24,6 @@ if "proto4_codex" not in sys.modules:
             sub_mod = importlib.util.module_from_spec(sub_spec)
             sys.modules[sub_name] = sub_mod
             sub_spec.loader.exec_module(sub_mod)
+
+from proto4_codex.config import *  # noqa: F401,F403
+from proto4_codex.freecad_engine import FreecadEngine  # noqa: F401

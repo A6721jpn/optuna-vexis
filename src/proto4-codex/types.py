@@ -61,14 +61,18 @@ class CaeResult:
     metrics: dict[str, float] = field(default_factory=dict)
     runtime_sec: float = 0.0
     artifact_paths: list[str] = field(default_factory=list)
+    failure_reason: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "status": self.status.value,
             "metrics": dict(self.metrics),
             "runtime_sec": self.runtime_sec,
             "artifact_paths": list(self.artifact_paths),
         }
+        if self.failure_reason:
+            payload["failure_reason"] = self.failure_reason
+        return payload
 
 
 @dataclass

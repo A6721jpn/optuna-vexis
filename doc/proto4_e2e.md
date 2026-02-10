@@ -29,6 +29,16 @@ Examples:
 python scripts/proto4_harness.py --generate-freecad --run-vexis --run-proto4 --max-trials 3
 ```
 
+### FreeCAD fallback
+
+If FreeCAD is not found in the conda env, the harness can fall back to a
+system install by setting `FREECAD_BIN` (or `freecad_bin` in
+`config/proto4_harness.yaml`). For this setup:
+
+```bash
+python scripts/proto4_harness.py --freecad-bin "C:/Program Files/FreeCAD 1.0/bin"
+```
+
 ## Test data generation (FreeCAD + VEXIS)
 
 ```bash
