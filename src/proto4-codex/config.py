@@ -44,7 +44,12 @@ class CadGateSpec:
 class CaeSpec:
     stroke_range_min: float = 0.0
     stroke_range_max: float = 0.5
-    timeout_sec: int = 600
+    solver_progress_stall_sec: int = 300
+    solver_log_poll_sec: float = 1.0
+    solver_error_markers: list[str] = field(default_factory=lambda: [
+        "error termination",
+        "fatal error",
+    ])
     max_retries: int = 1
     stream_stdout: bool = False
     stdout_log_dir: Optional[str] = None
@@ -196,10 +201,18 @@ def load_config(
     # --- CAE ---
     cae_raw = raw_lim.get("cae", {})
     sr = cae_raw.get("stroke_range", {})
+    raw_markers = cae_raw.get("solver_error_markers", ["error termination", "fatal error"])
+    if isinstance(raw_markers, str):
+        raw_markers = [raw_markers]
+    solver_error_markers = [str(m).strip().lower() for m in raw_markers if str(m).strip()]
+    if not solver_error_markers:
+        solver_error_markers = ["error termination", "fatal error"]
     cae = CaeSpec(
         stroke_range_min=float(sr.get("min", 0.0)),
         stroke_range_max=float(sr.get("max", 0.5)),
-        timeout_sec=int(cae_raw.get("timeout_sec", 600)),
+        solver_progress_stall_sec=int(cae_raw.get("solver_progress_stall_sec", 300)),
+        solver_log_poll_sec=float(cae_raw.get("solver_log_poll_sec", 1.0)),
+        solver_error_markers=solver_error_markers,
         max_retries=int(cae_raw.get("max_retries", 1)),
         stream_stdout=bool(cae_raw.get("stream_stdout", False)),
         stdout_log_dir=cae_raw.get("stdout_log_dir"),
@@ -246,3 +259,11 @@ def _validate(cfg: Proto4Config) -> None:
             raise ValueError(f"Invalid bounds for {b.name}: min={b.min} >= max={b.max}")
     if cfg.optimization.max_trials < 1:
         raise ValueError("max_trials must be >= 1")
+    if cfg.cae.max_retries < 1:
+        raise ValueError("cae.max_retries must be >= 1")
+    if cfg.cae.solver_progress_stall_sec < 1:
+        raise ValueError("cae.solver_progress_stall_sec must be >= 1")
+    if cfg.cae.solver_log_poll_sec <= 0:
+        raise ValueError("cae.solver_log_poll_sec must be > 0")
+    if not cfg.cae.solver_error_markers:
+        raise ValueError("cae.solver_error_markers must not be empty")

@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limits", default="config/proto4_limitations.yaml")
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cae-timeout", type=int, default=None)
+    parser.add_argument("--solver-stall-sec", type=int, default=None)
     parser.add_argument("--freecad-bin", default=None)
     parser.add_argument(
         "--accept-threshold",
@@ -176,11 +176,9 @@ def main() -> int:
     feat_cfg = cfg.objective.features if cfg.optimization.objective_type == "multi" else {}
     target_features = extract_features(target_curve, feat_cfg) if feat_cfg else {}
 
-    # CAE config override (avoid infinite hangs if timeout=0)
-    if args.cae_timeout is not None:
-        cfg.cae.timeout_sec = args.cae_timeout
-    elif cfg.cae.timeout_sec <= 0:
-        cfg.cae.timeout_sec = 300
+    # CAE config override (solver log progress watchdog)
+    if args.solver_stall_sec is not None:
+        cfg.cae.solver_progress_stall_sec = max(1, args.solver_stall_sec)
 
     cad_gate = CadGate(cfg.cad_gate)
     geometry_adapter = GeometryAdapter(cfg.freecad, project_root)

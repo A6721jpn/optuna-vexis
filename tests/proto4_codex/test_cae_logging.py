@@ -21,7 +21,7 @@ def test_vexis_stdout_log_written(tmp_path: Path):
     cae = CaeSpec(
         stroke_range_min=0.0,
         stroke_range_max=0.5,
-        timeout_sec=1,
+        solver_progress_stall_sec=60,
         max_retries=1,
         stream_stdout=True,
         stdout_log_dir=str(tmp_path / "logs"),

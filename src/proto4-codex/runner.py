@@ -29,6 +29,7 @@ from .config import Proto4Config, load_config
 from .geometry_adapter import GeometryAdapter
 from .objective import ObjectiveOrchestrator
 from .persistence import TrialPersistence
+from .reporting import generate_markdown_report
 from .search_space import (
     FeasibilityAwareSampler,
     create_sampler,
@@ -257,36 +258,35 @@ def main() -> int:
         completed = len(study.trials)
         remaining = max_trials - completed
         if remaining <= 0:
-            logger.info("Already completed %d trials; nothing to do", completed)
-            return 0
+            logger.info("Already completed %d trials; skip optimize and write report", completed)
+        else:
+            trial_counter = completed
 
-        trial_counter = completed
+            def wrapped_objective(trial: Trial) -> float | tuple[float, ...]:
+                nonlocal trial_counter
+                tid = trial_counter
+                trial_counter += 1
+                point = suggest_design_point(
+                    trial, tid, cfg.bounds, cfg.optimization.discretization_step,
+                )
+                # Pass the live Trial to the orchestrator so it can
+                # write feasibility attrs for constraints_func.
+                return orchestrator(point, trial=trial, dry_run=args.dry_run)
 
-        def wrapped_objective(trial: Trial) -> float | tuple[float, ...]:
-            nonlocal trial_counter
-            tid = trial_counter
-            trial_counter += 1
-            point = suggest_design_point(
-                trial, tid, cfg.bounds, cfg.optimization.discretization_step,
+            callbacks = [
+                ConvergenceCallback(
+                    cfg.optimization.convergence_threshold,
+                    patience=cfg.optimization.patience,
+                ),
+            ]
+
+            logger.info("Optimization: total=%d, remaining=%d", max_trials, remaining)
+            study.optimize(
+                wrapped_objective,
+                n_trials=remaining,
+                callbacks=callbacks,
+                show_progress_bar=False,
             )
-            # Pass the live Trial to the orchestrator so it can
-            # write feasibility attrs for constraints_func.
-            return orchestrator(point, trial=trial, dry_run=args.dry_run)
-
-        callbacks = [
-            ConvergenceCallback(
-                cfg.optimization.convergence_threshold,
-                patience=cfg.optimization.patience,
-            ),
-        ]
-
-        logger.info("Optimization: total=%d, remaining=%d", max_trials, remaining)
-        study.optimize(
-            wrapped_objective,
-            n_trials=remaining,
-            callbacks=callbacks,
-            show_progress_bar=False,
-        )
 
         # --- Summary ---
         best_value = None
@@ -307,15 +307,32 @@ def main() -> int:
                 rejection_stats["rejected"],
             )
 
+        end_time = datetime.now()
         summary = {
             "start_time": start_time.isoformat(),
-            "end_time": datetime.now().isoformat(),
+            "end_time": end_time.isoformat(),
             "total_trials": len(study.trials),
             "best_value": best_value,
             "best_params": best_params,
             "rejection_stats": rejection_stats,
         }
         persistence.save_summary(summary)
+
+        try:
+            report_path = generate_markdown_report(
+                result_dir=result_dir,
+                study=study,
+                cfg=cfg,
+                optimizer_config_path=args.config,
+                limits_config_path=args.limits,
+                start_time=start_time,
+                end_time=end_time,
+                actual_sampler_name=type(sampler).__name__,
+                rejection_stats=rejection_stats,
+            )
+            logger.info("Markdown report saved: %s", report_path)
+        except Exception as exc:
+            logger.warning("Failed to generate markdown report: %s", exc)
 
         logger.info("Proto4 optimization end — best_value=%s", best_value)
         return 0

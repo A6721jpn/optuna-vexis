@@ -109,7 +109,11 @@ cae:
   stroke_range:
     min: 0.0
     max: 0.1
-  timeout_sec: 0
+  solver_progress_stall_sec: 300
+  solver_log_poll_sec: 1.0
+  solver_error_markers:
+    - "ERROR TERMINATION"
+    - "FATAL ERROR"
   max_retries: 1
   stream_stdout: true
   stdout_log_dir: "output/logs/vexis"

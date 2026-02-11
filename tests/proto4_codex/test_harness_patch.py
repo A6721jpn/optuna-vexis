@@ -15,7 +15,7 @@ spec.loader.exec_module(mod)
 
 def test_patch_limits_adds_stdout_fields(tmp_path: Path):
     limits = tmp_path / "limits.yaml"
-    limits.write_text("cae:\n  timeout_sec: 10\n")
+    limits.write_text("cae:\n  solver_progress_stall_sec: 10\n")
 
     class DummyCtx:
         logs_dir = tmp_path / "logs"

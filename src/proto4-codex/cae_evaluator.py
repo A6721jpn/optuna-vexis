@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
+import re
 import shutil
-import signal
 import subprocess
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +39,7 @@ _FORCE_CANDIDATES = [
     "Reaction_Force", "reaction_force", "Adjusted force", "adjusted_force",
     "Force", "force", "Reaction", "reaction", "y", "Y", "Fz", "fz",
 ]
+_SOLVER_PROGRESS_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)")
 
 
 def _find_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
@@ -46,6 +47,32 @@ def _find_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
     for cand in candidates:
         if cand.lower() in lower_map:
             return lower_map[cand.lower()]
+    return None
+
+
+def _extract_solver_progress(line: str) -> Optional[float]:
+    if "solver time" not in line.lower():
+        return None
+    matches = _SOLVER_PROGRESS_RE.findall(line)
+    if not matches:
+        return None
+    cur_text, total_text = matches[-1]
+    try:
+        cur = float(cur_text)
+        total = float(total_text)
+    except ValueError:
+        return None
+    if total <= 0:
+        return None
+    ratio = cur / total
+    return min(1.0, max(0.0, ratio))
+
+
+def _detect_solver_error_marker(line: str, markers: tuple[str, ...]) -> Optional[str]:
+    low = line.lower()
+    for marker in markers:
+        if marker and marker in low:
+            return marker
     return None
 
 
@@ -332,8 +359,9 @@ class CaeEvaluator:
         cmd = [python_cmd, str(self._vexis_main)]
         logger.info("VEXIS run: %s", " ".join(cmd))
 
-        error_detected = False
-        timeout_reached = False
+        error_markers = tuple(m.strip().lower() for m in self._cae_spec.solver_error_markers if m.strip())
+        solver_marker_reason: Optional[str] = None
+        solver_stalled_reason: Optional[str] = None
         stdout_fh = None
         try:
             creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -363,46 +391,114 @@ class CaeEvaluator:
             )
             self._current_proc = proc
 
-            timeout = self._cae_spec.timeout_sec
-            if timeout and timeout > 0:
-                def _watcher():
-                    nonlocal timeout_reached
-                    t0 = time.time()
-                    while proc.poll() is None:
-                        if self._stop_requested:
-                            self._terminate(proc)
-                            return
-                        if time.time() - t0 > timeout:
-                            timeout_reached = True
-                            self._terminate(proc)
-                            return
-                        time.sleep(1)
-                threading.Thread(target=_watcher, daemon=True).start()
+            stall_sec = max(1, int(self._cae_spec.solver_progress_stall_sec))
+            poll_sec = max(0.1, float(self._cae_spec.solver_log_poll_sec))
+            start_ts = time.time()
+            solver_log_seen = False
+            last_solver_progress: Optional[float] = None
+            last_solver_progress_ts = start_ts
+            line_queue: queue.Queue[Optional[str]] = queue.Queue()
 
-            for line in proc.stdout:
+            def _reader() -> None:
+                try:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        line_queue.put(line.rstrip("\n"))
+                finally:
+                    line_queue.put(None)
+
+            threading.Thread(target=_reader, daemon=True).start()
+            poll_token = object()
+            reader_done = False
+
+            while True:
                 if self._stop_requested:
+                    self._terminate(proc)
                     break
-                low = line.lower()
-                if "error termination" in low or "fatal error" in low:
-                    error_detected = True
-                    logger.warning("VEXIS error detected: %s", line.rstrip())
-                msg = line.rstrip()
-                logger.debug(msg)
-                if stdout_fh:
-                    stdout_fh.write(msg + "\n")
-                if self._cae_spec.stream_stdout:
-                    level_name = self._cae_spec.stdout_console_level.upper()
-                    level = getattr(logging, level_name, logging.INFO)
-                    if logger.isEnabledFor(level):
-                        logger.log(level, "VEXIS: %s", msg)
+
+                now = time.time()
+                try:
+                    line_item = line_queue.get(timeout=poll_sec)
+                except queue.Empty:
+                    line_item = poll_token
+
+                if line_item is None:
+                    reader_done = True
+                elif line_item is not poll_token:
+                    msg = str(line_item)
+                    low = msg.lower()
+                    matched_marker = _detect_solver_error_marker(low, error_markers)
+                    if matched_marker and solver_marker_reason is None:
+                        solver_marker_reason = self._format_solver_error_reason(matched_marker)
+                        logger.warning(
+                            "VEXIS solver error marker detected (%s): %s",
+                            matched_marker,
+                            msg.rstrip(),
+                        )
+
+                    progress = _extract_solver_progress(msg)
+                    if progress is not None:
+                        solver_log_seen = True
+                        if last_solver_progress is None or progress > last_solver_progress + 1e-8:
+                            last_solver_progress = progress
+                            last_solver_progress_ts = now
+
+                    logger.debug(msg)
+                    if stdout_fh:
+                        stdout_fh.write(msg + "\n")
+                    if self._cae_spec.stream_stdout:
+                        level_name = self._cae_spec.stdout_console_level.upper()
+                        level = getattr(logging, level_name, logging.INFO)
+                        if logger.isEnabledFor(level):
+                            logger.log(level, "VEXIS: %s", msg)
+
+                    if matched_marker and proc.poll() is None:
+                        self._terminate(proc)
+                        break
+
+                if proc.poll() is None and not solver_log_seen and (now - start_ts) > stall_sec:
+                    solver_stalled_reason = self._format_solver_start_reason(stall_sec)
+                    logger.warning(
+                        "VEXIS solver log did not start (%s); terminating process",
+                        solver_stalled_reason,
+                    )
+                    self._terminate(proc)
+                    break
+
+                progress_age = now - last_solver_progress_ts
+                if (
+                    proc.poll() is None
+                    and solver_log_seen
+                    and self._is_solver_progress_stalled(
+                        last_solver_progress,
+                        progress_age,
+                        stall_sec,
+                    )
+                ):
+                    solver_stalled_reason = self._format_solver_progress_stall_reason(
+                        last_solver_progress,
+                        stall_sec,
+                    )
+                    logger.warning(
+                        "VEXIS solver progress stalled (%s); terminating process",
+                        solver_stalled_reason,
+                    )
+                    self._terminate(proc)
+                    break
+
+                if proc.poll() is not None and reader_done and line_queue.empty():
+                    break
 
             proc.wait()
 
             if self._stop_requested:
                 self._last_failure_reason = "stop_requested"
                 return None
-            if timeout_reached:
-                self._last_failure_reason = f"timeout_after_{self._cae_spec.timeout_sec}s"
+            if solver_marker_reason:
+                self._last_failure_reason = solver_marker_reason
+                return None
+            if solver_stalled_reason:
+                self._last_failure_reason = solver_stalled_reason
                 return None
             if proc.returncode != 0:
                 self._last_failure_reason = f"process_exit_{proc.returncode}"
@@ -424,19 +520,38 @@ class CaeEvaluator:
             time.sleep(0.5)
 
         if result_csv.exists():
-            if error_detected:
-                logger.warning(
-                    "VEXIS output contained fatal markers but result CSV exists: %s",
-                    result_csv,
-                )
             return result_csv
 
-        self._last_failure_reason = (
-            "fatal_error_output_and_result_missing"
-            if error_detected
-            else "result_csv_missing"
-        )
+        self._last_failure_reason = "result_csv_missing"
         return None
+
+    @staticmethod
+    def _format_solver_start_reason(stall_sec: int) -> str:
+        return f"solver_log_not_started_for_{stall_sec}s"
+
+    @staticmethod
+    def _format_solver_progress_stall_reason(progress: Optional[float], stall_sec: int) -> str:
+        if progress is None:
+            return f"solver_log_stalled_for_{stall_sec}s"
+        return f"solver_progress_stalled_at_{progress * 100.0:.1f}pct_for_{stall_sec}s"
+
+    @staticmethod
+    def _format_solver_error_reason(marker: str) -> str:
+        normalized = marker.strip().lower().replace(" ", "_")
+        return f"solver_error_marker:{normalized}"
+
+    @staticmethod
+    def _is_solver_progress_stalled(
+        progress: Optional[float],
+        elapsed_since_progress_sec: float,
+        stall_sec: int,
+    ) -> bool:
+        if elapsed_since_progress_sec <= stall_sec:
+            return False
+        if progress is not None and progress >= 1.0 - 1e-6:
+            # After reported 100%, post-processing can continue without solver ticks.
+            return False
+        return True
 
     def _terminate(self, proc: subprocess.Popen, timeout: int = 10) -> None:
         if proc.poll() is not None:

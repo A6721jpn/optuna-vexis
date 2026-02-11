@@ -147,6 +147,8 @@ class ObjectiveOrchestrator:
             "fatal",
             "execution_error",
             "subprocess_failed",
+            "stall",
+            "solver_error_marker",
         )):
             return 1.0
         if any(token in reason for token in ("result_load_failed", "result_csv_missing")):
