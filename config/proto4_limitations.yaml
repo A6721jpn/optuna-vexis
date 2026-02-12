@@ -109,7 +109,7 @@ cae:
   stroke_range:
     min: 0.0
     max: 0.1
-  solver_progress_stall_sec: 300
+  solver_progress_stall_sec: 600
   solver_log_poll_sec: 1.0
   solver_error_markers:
     - "ERROR TERMINATION"

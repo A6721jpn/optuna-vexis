@@ -25,6 +25,44 @@ python -m src.proto4-claude.runner \
     --limits config/proto4_limitations.yaml
 ```
 
+## CAD Gate依存関係
+
+`input/cad_gate_model` の `model.joblib` / `scaler.joblib` を使う場合、実行Pythonに
+以下が必要です。
+
+- `joblib`
+- `scikit-learn`
+
+```bash
+python -m pip install joblib scikit-learn
+```
+
+## Sampler依存関係（AUTO使用時）
+
+`optimization.sampler: "AUTO"` で OptunaHub AutoSampler を使う場合は、
+追加で以下が必要です。
+
+- `optunahub`
+- `cmaes`
+- `scipy`
+- `torch`（CPU版可）
+
+```bash
+python -m pip install optunahub cmaes scipy
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+## 指定可能サンプラー
+
+- `AUTO`
+- `GP`
+- `TPE`
+- `MOTPE` / `MO-TPE`
+- `NSGAII`
+- `NSGAIII`
+- `RANDOM`
+- `CMA-ES`
+
 ## 設定ファイル
 
 | ファイル                         | 内容                                |

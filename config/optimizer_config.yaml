@@ -7,9 +7,12 @@ optimization:
   # - "AUTO": OptunaHub AutoSampler（推奨）。サンプラーと初期探索を自動選択。
   # - "TPE": ベイズ最適化。単一目的または多目的に有効。
   # - "NSGAII": 多目的最適化専用（パレート解探索用）。
+  # - "NSGAIII": 多目的最適化専用（高次元目的で有効）。
+  # - "MOTPE": 多目的TPE（TPESamplerのmulti-objective向け設定）。
   # - "GP": ガウス過程（実験的）。目的関数は4つ以下にするほうが良い。
   # - "CMA-ES": 共分散行列適応進化戦略。連続値の最適化に強力（実験的）。
   # - "RANDOM": ランダム探索。
+  # ※ AUTOを使うには optunahub/cmaes/scipy/torch が必要。
   sampler: "AUTO"
   
   # 最大試行回数
@@ -33,27 +36,36 @@ optimization:
   # 目的関数タイプ: "single" | "multi"
   # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
   # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはGP,TPE,NSGAII推奨。
-  objective_type: "single"
+  objective_type: "multi"
+  directions: ["maximize", "maximize"]
   
   # 係数の離散化ステップ（オプション）
   # CAEソフトの有効数字制限に合わせて離散値にする
   # 例: 0.0001 = 小数点以下4桁、0.01 = 小数点以下2桁
   # 未指定またはnull = 連続値（離散化なし）
-  discretization_step: 0.00001
+  # Production v1.0: 寸法サンプリング離散化
+  # - 寸法名に "ANGLE" を含むもの: 0.001刻み
+  # - それ以外: 0.01刻み
+  enable_dimension_discretization: true
+  non_angle_step: 0.01
+  angle_step: 0.001
+  angle_name_token: "ANGLE"
+  # 互換用（enable_dimension_discretization=false時のみ使用）
+  discretization_step: null
 
 objective:
   # 目的関数タイプ
   # "rmse": カーブ全体のRMSE
-  # "multi": RMSE + 特徴量の重み付け
-  type: "rmse"
+  # "multi": 複数目的最適化
+  type: "multi"
+  include_rmse_in_multi: false
+  multi_objectives_use_error: false
+  multi_objectives: ["click_ratio", "peak_force"]
   
   # 多目的最適化時の重み
   weights:
-    rmse: 1.0           # カーブ全体の一致度
-    peak_force: 0.5     # ピーク荷重の誤差
-    stiffness: 0.3      # 初期剛性の誤差
-    peak_position: 0.8  # ピーク位置の誤差（重要）
-    post_peak_slope: 0.3 # ピーク後の傾き
+    click_ratio: 1.0    # クリック率
+    peak_force: 1.0     # 1stピーク荷重
 
   # 特徴量抽出設定
   # 利用可能なタイプ:
@@ -64,25 +76,18 @@ objective:
   # - "peak_position": 最大値の位置(Disp)
   # - "value_at": 指定Dispでの値
   # - "local_max": 極大値（ピーク）
+  # - "peak_force": 最初の極値ピーク荷重
+  # - "next_bottom_force": 最初ピーク後の次ボトム荷重
+  # - "click_ratio": (1stピーク - 次ボトム) / 1stピーク
   features:
-    peak_force:
-      type: "local_max"   # 極大値（ピーク）
+    click_ratio:
+      type: "click_ratio" # (1stピーク - 次ボトム) / 1stピーク
       # prominence: 0.1   # 必要に応じて閾値を設定
       column: "force"
-    
-    stiffness:
-      type: "slope"       # 初期傾き
-      column: "force"
-      range: [0.0, 0.3]   # 変位範囲 [mm]
-    
-    peak_position:
-      type: "peak_position"
-      column: "force"
 
-    post_peak_slope:
-      type: "slope"
+    peak_force:
+      type: "peak_force"  # 最初の極値ピーク荷重
       column: "force"
-      range: [0.5, 1.0]   # ピーク後（0.5mm以降）の範囲
 
 logging:
   # ログレベル: DEBUG, INFO, WARNING, ERROR
