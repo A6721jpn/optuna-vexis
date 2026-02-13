@@ -1,1 +1,1 @@
-"""Proto4-Claude: CAD feasibility-gated optimization with VEXIS."""
+"""Production v1.0: CAD feasibility-gated optimization with VEXIS."""

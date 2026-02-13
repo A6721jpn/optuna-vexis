@@ -1,5 +1,5 @@
 """
-Proto4 Geometry Adapter
+v1.0 Geometry Adapter
 
 Converts a feasible DesignPoint into a STEP file that VEXIS can consume.
 FreeCAD work is executed in a dedicated subprocess so ABI mismatches
@@ -38,7 +38,7 @@ class GeometryAdapter:
         self._engine = None  # compatibility no-op
 
     def _worker_script_path(self) -> Path:
-        return self._project_root / "src" / "proto4-codex" / "freecad_worker.py"
+        return self._project_root / "src" / "v1" / "freecad_worker.py"
 
     @staticmethod
     def _python_from_bin_dir(bin_dir: Path) -> Optional[Path]:
@@ -82,7 +82,7 @@ class GeometryAdapter:
         freecad_python = self._resolve_freecad_python()
         timeout_sec = self._spec.timeout_sec if self._spec.timeout_sec > 0 else None
 
-        with tempfile.TemporaryDirectory(prefix=f"proto4_trial_{point.trial_id}_") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix=f"v1_0_trial_{point.trial_id}_") as tmpdir:
             tmp = Path(tmpdir)
             constraints_json = tmp / "constraints.json"
             params_json = tmp / "params.json"
@@ -174,4 +174,3 @@ class GeometryAdapter:
     def close(self) -> None:
         """Compatibility no-op; worker subprocess owns FreeCAD lifecycle."""
         self._engine = None
-

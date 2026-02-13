@@ -1,5 +1,5 @@
 """
-Proto4 Persistence
+v1.0 Persistence
 
 Per-trial artifact and metadata persistence for traceability and
 reproducibility.
@@ -52,7 +52,7 @@ class TrialPersistence:
 
     def save_summary(self, summary: dict[str, Any]) -> Path:
         """Write the final optimization summary."""
-        out_path = self._result_dir / "summary_proto4.json"
+        out_path = self._result_dir / "summary_v1_0.json"
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
         logger.info("Summary saved: %s", out_path)

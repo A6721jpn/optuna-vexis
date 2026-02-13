@@ -1,5 +1,5 @@
 """
-Proto4 Search Space
+v1.0 Search Space
 
 Optuna sampler creation and trial-to-parameter mapping.
 
@@ -57,7 +57,8 @@ except Exception as exc:
 logger = logging.getLogger(__name__)
 
 # Key used in trial.user_attrs to communicate feasibility violation score
-FEASIBILITY_ATTR = "proto4_feasibility_violation"
+FEASIBILITY_ATTR = "v1_0_feasibility_violation"
+LEGACY_FEASIBILITY_ATTR = "proto4_feasibility_violation"
 
 
 # ------------------------------------------------------------------
@@ -69,7 +70,7 @@ def make_constraints_func() -> Callable[[FrozenTrial], Sequence[float]]:
     violation score stored by the objective orchestrator.
 
     Convention:
-      - ``trial.user_attrs["proto4_feasibility_violation"]`` is a float
+      - ``trial.user_attrs["v1_0_feasibility_violation"]`` is a float
       - <= 0  → feasible
       - > 0   → infeasible (magnitude = severity)
 
@@ -78,7 +79,11 @@ def make_constraints_func() -> Callable[[FrozenTrial], Sequence[float]]:
     """
 
     def constraints_func(trial: FrozenTrial) -> Sequence[float]:
-        return [trial.user_attrs.get(FEASIBILITY_ATTR, 0.0)]
+        if FEASIBILITY_ATTR in trial.user_attrs:
+            return [trial.user_attrs[FEASIBILITY_ATTR]]
+        if LEGACY_FEASIBILITY_ATTR in trial.user_attrs:
+            return [trial.user_attrs[LEGACY_FEASIBILITY_ATTR]]
+        return [0.0]
 
     return constraints_func
 

@@ -1,13 +1,13 @@
-# Production v1.0 (Proto4 Baseline)
+# Production v1.0
 
-`src/v1` is the first production package copied from `src/proto4-codex`.
+`src/v1` is the production package for the first release line.
 
 ## Run
 
 ```bash
 python scripts/run_v1.py \
   --config config/optimizer_config.yaml \
-  --limits config/proto4_limitations.yaml
+  --limits config/v1_0_limitations.yaml
 ```
 
 ## Dependencies
@@ -43,6 +43,6 @@ python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 - Product line: `Production`
 - Version: `1.0.0`
-- Baseline: `proto4`
+- Baseline: `v1.0`
 
 `python scripts/run_v1.py --version` prints runtime version metadata including git revision.

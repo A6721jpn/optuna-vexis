@@ -1,5 +1,5 @@
 """
-Proto4 Markdown Reporting
+v1.0 Markdown Reporting
 
 Generate a post-run Markdown report with:
   - CAE completion summary
@@ -20,12 +20,14 @@ from typing import Any, Optional
 
 import optuna
 
-from .config import Proto4Config
+from .config import V1Config
 
 logger = logging.getLogger(__name__)
 
-FAILURE_STAGE_ATTR = "proto4_failure_stage"
-FAILURE_REASON_ATTR = "proto4_failure_reason"
+FAILURE_STAGE_ATTR = "v1_0_failure_stage"
+FAILURE_REASON_ATTR = "v1_0_failure_reason"
+LEGACY_FAILURE_STAGE_ATTR = "proto4_failure_stage"
+LEGACY_FAILURE_REASON_ATTR = "proto4_failure_reason"
 
 
 def _fmt(value: Any) -> str:
@@ -34,6 +36,16 @@ def _fmt(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.6g}"
     return str(value)
+
+
+def _trial_attr(
+    trial: optuna.trial.FrozenTrial,
+    primary_key: str,
+    legacy_key: str,
+) -> Any:
+    if primary_key in trial.user_attrs:
+        return trial.user_attrs.get(primary_key)
+    return trial.user_attrs.get(legacy_key)
 
 
 def _load_trial_records(result_dir: Path) -> dict[int, dict[str, Any]]:
@@ -52,7 +64,7 @@ def _load_trial_records(result_dir: Path) -> dict[int, dict[str, Any]]:
     return trial_records
 
 
-def _objective_labels(cfg: Proto4Config, study: optuna.study.Study) -> list[str]:
+def _objective_labels(cfg: V1Config, study: optuna.study.Study) -> list[str]:
     if cfg.optimization.objective_type != "multi":
         return ["rmse"] if len(study.directions) == 1 else [
             f"objective_{i + 1}" for i in range(len(study.directions))
@@ -370,7 +382,7 @@ def _write_pareto_svg(
 
 
 def _collect_table_columns(
-    cfg: Proto4Config,
+    cfg: V1Config,
     study: optuna.study.Study,
     trial_records: dict[int, dict[str, Any]],
 ) -> tuple[list[str], list[str], list[str]]:
@@ -390,7 +402,7 @@ def _collect_table_columns(
 
 
 def _build_iteration_table(
-    cfg: Proto4Config,
+    cfg: V1Config,
     study: optuna.study.Study,
     trial_records: dict[int, dict[str, Any]],
 ) -> str:
@@ -424,7 +436,7 @@ def _build_iteration_table(
             rec.get("outcome", "-"),
             *value_cells,
             *metric_cells,
-            _fmt(trial.user_attrs.get(FAILURE_REASON_ATTR)),
+            _fmt(_trial_attr(trial, FAILURE_REASON_ATTR, LEGACY_FAILURE_REASON_ATTR)),
             _fmt(rec.get("wall_clock_sec")),
             *param_cells,
         ]
@@ -437,7 +449,7 @@ def generate_markdown_report(
     *,
     result_dir: Path,
     study: optuna.study.Study,
-    cfg: Proto4Config,
+    cfg: V1Config,
     optimizer_config_path: str,
     limits_config_path: str,
     start_time: datetime,
@@ -447,7 +459,7 @@ def generate_markdown_report(
     version_info: Optional[dict[str, Any]] = None,
 ) -> Path:
     """Generate a post-run Markdown report and return its path."""
-    report_path = result_dir / "report_proto4.md"
+    report_path = result_dir / "report_v1_0.md"
     assets_dir = result_dir / "report_assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -480,8 +492,8 @@ def generate_markdown_report(
     stage_counts: dict[str, int] = {}
     reason_counts: dict[str, int] = {}
     for t in study.trials:
-        stage = t.user_attrs.get(FAILURE_STAGE_ATTR)
-        reason = t.user_attrs.get(FAILURE_REASON_ATTR)
+        stage = _trial_attr(t, FAILURE_STAGE_ATTR, LEGACY_FAILURE_STAGE_ATTR)
+        reason = _trial_attr(t, FAILURE_REASON_ATTR, LEGACY_FAILURE_REASON_ATTR)
         if stage:
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
         if reason:
@@ -494,7 +506,7 @@ def generate_markdown_report(
         pass
 
     lines: list[str] = []
-    lines.append("# Proto4 最適化レポート")
+    lines.append("# Production v1.0 最適化レポート")
     lines.append("")
     lines.append(f"- 生成時刻: {datetime.now().isoformat()}")
     lines.append(f"- 実行開始: {start_time.isoformat()}")

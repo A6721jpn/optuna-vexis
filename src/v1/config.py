@@ -1,5 +1,5 @@
 """
-Proto4 Configuration
+v1.0 Configuration
 
 Load, validate, and expose typed configuration from YAML files.
 """
@@ -105,13 +105,13 @@ class FreecadSpec:
     surface_label: str = "SURFACE"
     constraints: dict[str, dict[str, float]] = field(default_factory=dict)
     step_output_dir: str = "input/step"
-    step_filename_template: str = "proto4_trial_{trial_id}.step"
+    step_filename_template: str = "v1_0_trial_{trial_id}.step"
     timeout_sec: int = 300
 
 
 @dataclass
-class Proto4Config:
-    """Aggregated configuration for a Proto4 run."""
+class V1Config:
+    """Aggregated configuration for a v1.0 run."""
 
     optimization: OptimizationSpec = field(default_factory=OptimizationSpec)
     objective: ObjectiveSpec = field(default_factory=ObjectiveSpec)
@@ -132,8 +132,8 @@ def _load_yaml(path: Path) -> dict:
 def load_config(
     optimizer_config_path: Path,
     limits_path: Path,
-) -> Proto4Config:
-    """Load and validate both YAML files into a single Proto4Config."""
+) -> V1Config:
+    """Load and validate both YAML files into a single v1.0 config object."""
 
     if not optimizer_config_path.exists():
         raise FileNotFoundError(f"Config not found: {optimizer_config_path}")
@@ -201,7 +201,7 @@ def load_config(
         constraints=constraints_raw,
         step_output_dir=fc_raw.get("step_output_dir", "input/step"),
         step_filename_template=fc_raw.get(
-            "step_filename_template", "proto4_trial_{trial_id}.step"
+            "step_filename_template", "v1_0_trial_{trial_id}.step"
         ),
         timeout_sec=int(fc_raw.get("timeout_sec", 300)),
     )
@@ -250,7 +250,7 @@ def load_config(
         if isinstance(spec, dict) and "min" in spec and "max" in spec:
             bounds.append(BoundsSpec(name=name, min=float(spec["min"]), max=float(spec["max"])))
 
-    cfg = Proto4Config(
+    cfg = V1Config(
         optimization=optimization,
         objective=objective,
         logging=logging_spec,
@@ -263,11 +263,11 @@ def load_config(
     )
 
     _validate(cfg)
-    logger.info("Proto4 config loaded: %d design variables", len(cfg.bounds))
+    logger.info("v1.0 config loaded: %d design variables", len(cfg.bounds))
     return cfg
 
 
-def _validate(cfg: Proto4Config) -> None:
+def _validate(cfg: V1Config) -> None:
     """Raise on obviously invalid configuration."""
     if not cfg.bounds:
         raise ValueError("No design variables defined in freecad.constraints")

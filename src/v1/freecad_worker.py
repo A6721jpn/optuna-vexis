@@ -1,5 +1,5 @@
 """
-FreeCAD worker subprocess for proto4-codex geometry generation.
+FreeCAD worker subprocess for v1.0 geometry generation.
 
 This script is executed by a FreeCAD-compatible Python interpreter.
 It updates sketch constraints from ratio parameters and exports a STEP.
@@ -24,7 +24,7 @@ from pathlib import Path
 
 def _load_freecad_engine_module():
     module_path = Path(__file__).resolve().parent / "freecad_engine.py"
-    spec = importlib.util.spec_from_file_location("proto4_freecad_engine_worker", module_path)
+    spec = importlib.util.spec_from_file_location("v1_0_freecad_engine_worker", module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Failed to load freecad_engine module from {module_path}")
     module = importlib.util.module_from_spec(spec)
@@ -34,7 +34,7 @@ def _load_freecad_engine_module():
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Proto4 FreeCAD worker")
+    p = argparse.ArgumentParser(description="v1.0 FreeCAD worker")
     p.add_argument("--fcstd-path", required=True)
     p.add_argument("--sketch-name", required=True)
     p.add_argument("--surface-name", required=True)

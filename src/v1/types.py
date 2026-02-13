@@ -1,5 +1,5 @@
 """
-Proto4 Shared Types
+v1.0 Shared Types
 
 Design-level DTOs used across all modules.
 """

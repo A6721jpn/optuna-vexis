@@ -1,9 +1,9 @@
 """
-Proto4 Runner
+v1.0 Runner
 
 CLI entrypoint and Optuna study lifecycle management.
 
-Key features over proto3:
+Key features:
   - ``constraints_func`` injected into TPE/NSGA-II so the sampler
     learns the CAD feasibility boundary from trial history.
   - ``FeasibilityAwareSampler`` wrapper performs rejection sampling
@@ -27,7 +27,7 @@ from optuna.trial import Trial
 
 from .cad_gate import CadGate
 from .cae_evaluator import CaeEvaluator, load_curve, extract_range, extract_features
-from .config import Proto4Config, load_config
+from .config import load_config
 from .geometry_adapter import GeometryAdapter
 from .objective import ObjectiveOrchestrator
 from .persistence import TrialPersistence
@@ -91,7 +91,7 @@ class ConvergenceCallback:
 def _setup_logging(log_dir: Path, level: str = "INFO") -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"proto4_{timestamp}.log"
+    log_file = log_dir / f"v1_0_{timestamp}.log"
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -117,15 +117,15 @@ def _setup_logging(log_dir: Path, level: str = "INFO") -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Proto4: CAD feasibility-gated optimization with VEXIS"
+        description="Production v1.0: CAD feasibility-gated optimization with VEXIS"
     )
     parser.add_argument(
         "--config", "-c", default="config/optimizer_config.yaml",
         help="Optimizer config YAML",
     )
     parser.add_argument(
-        "--limits", "-l", default="config/proto4_limitations.yaml",
-        help="Proto4 limitations YAML",
+        "--limits", "-l", default="config/v1_0_limitations.yaml",
+        help="v1.0 limitations YAML",
     )
     parser.add_argument("--max-trials", "-n", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
@@ -163,7 +163,7 @@ def main() -> int:
     log_level = "DEBUG" if args.verbose else cfg.logging.level
     _setup_logging(log_dir, level=log_level)
 
-    logger.info("Proto4 optimization start")
+    logger.info("v1.0 optimization start")
 
     try:
         max_trials = args.max_trials or cfg.optimization.max_trials
@@ -191,7 +191,7 @@ def main() -> int:
         # Paths
         result_dir = project_root / cfg.paths.result_dir
         result_dir.mkdir(parents=True, exist_ok=True)
-        storage_path = result_dir / "optuna_study_proto4.db"
+        storage_path = result_dir / "optuna_study_v1_0.db"
         storage_url = f"sqlite:///{storage_path}"
 
         # Target curve
@@ -359,7 +359,7 @@ def main() -> int:
 
         # Optuna study
         study = optuna.create_study(
-            study_name="proto4_optimization",
+            study_name="v1_0_optimization",
             sampler=sampler,
             directions=directions,
             storage=storage_url,
@@ -451,7 +451,7 @@ def main() -> int:
         except Exception as exc:
             logger.warning("Failed to generate markdown report: %s", exc)
 
-        logger.info("Proto4 optimization end — best_value=%s", best_value)
+        logger.info("v1.0 optimization end — best_value=%s", best_value)
         return 0
 
     except KeyboardInterrupt:

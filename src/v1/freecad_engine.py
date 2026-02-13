@@ -1,5 +1,5 @@
 """
-Proto4 FreeCAD Engine
+v1.0 FreeCAD Engine
 
 Core FreeCAD operations extracted from proto3-hybrid/hybrid_solver.py.
 Provides headless FreeCAD execution for constraint updates and STEP export.

@@ -1,5 +1,5 @@
 """
-Proto4 CAD Feasibility Gate
+v1.0 CAD Feasibility Gate
 
 Adapter to an ML model that predicts whether a given DesignPoint will
 produce a valid CAD geometry or break during STEP generation.

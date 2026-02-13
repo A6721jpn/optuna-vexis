@@ -1,5 +1,5 @@
 """
-Proto4 CAE Evaluator
+v1.0 CAE Evaluator
 
 Wraps VEXIS subprocess execution, result CSV loading, curve processing,
 and metric extraction into a single coherent unit.
@@ -296,7 +296,7 @@ class CaeEvaluator:
 
     def evaluate(self, step_path: Path, point: DesignPoint) -> CaeResult:
         """Run full CAE evaluation pipeline with retry."""
-        job_name = f"proto4_trial_{point.trial_id}"
+        job_name = f"v1_0_trial_{point.trial_id}"
         retries = max(1, self._cae_spec.max_retries)
         result = CaeResult(status=CaeStatus.FAIL, failure_reason="cae_not_started")
 

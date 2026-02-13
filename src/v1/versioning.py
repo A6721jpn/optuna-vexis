@@ -1,5 +1,5 @@
 """
-Proto4-codex version metadata helpers.
+v1.0 version metadata helpers.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Any
 PRODUCT_NAME = "optuna-for-vexis"
 PRODUCT_LINE = "Production"
 PRODUCT_VERSION = "1.0.0"
-BASELINE = "proto4"
+BASELINE = "v1.0"
 
 
 def _git_output(project_root: Path, *args: str) -> str | None:
@@ -42,4 +42,3 @@ def get_version_info(project_root: Path) -> dict[str, Any]:
         "git_branch": branch,
         "git_dirty": dirty,
     }
-

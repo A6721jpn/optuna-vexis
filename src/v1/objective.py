@@ -1,5 +1,5 @@
 """
-Proto4 Objective Orchestrator
+v1.0 Objective Orchestrator
 
 Unified objective function that implements the full decision policy:
   1. Check hard constraints
@@ -24,11 +24,11 @@ import optuna
 
 from .cad_gate import CadGate
 from .cae_evaluator import CaeEvaluator
-from .config import Proto4Config
+from .config import V1Config
 from .constraints import check_hard_constraints, penalty_value
 from .geometry_adapter import GeometryAdapter, GeometryError
 from .persistence import TrialPersistence
-from .search_space import FEASIBILITY_ATTR
+from .search_space import FEASIBILITY_ATTR, LEGACY_FEASIBILITY_ATTR
 from .types import (
     CaeResult,
     CaeStatus,
@@ -39,12 +39,14 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-FAILURE_STAGE_ATTR = "proto4_failure_stage"
-FAILURE_REASON_ATTR = "proto4_failure_reason"
+FAILURE_STAGE_ATTR = "v1_0_failure_stage"
+FAILURE_REASON_ATTR = "v1_0_failure_reason"
+LEGACY_FAILURE_STAGE_ATTR = "proto4_failure_stage"
+LEGACY_FAILURE_REASON_ATTR = "proto4_failure_reason"
 
 
 class ObjectiveOrchestrator:
-    """Wire together all proto4 components into one callable objective.
+    """Wire together all v1.0 components into one callable objective.
 
     The orchestrator accepts an optional ``optuna.trial.Trial`` so it can
     write the feasibility violation score into ``trial.user_attrs``.
@@ -54,7 +56,7 @@ class ObjectiveOrchestrator:
 
     def __init__(
         self,
-        cfg: Proto4Config,
+        cfg: V1Config,
         cad_gate: CadGate,
         geometry_adapter: GeometryAdapter,
         cae_evaluator: CaeEvaluator,
@@ -141,6 +143,7 @@ class ObjectiveOrchestrator:
         """
         if trial is not None:
             trial.set_user_attr(FEASIBILITY_ATTR, violation)
+            trial.set_user_attr(LEGACY_FEASIBILITY_ATTR, violation)
 
     @staticmethod
     def _store_failure_context(
@@ -152,8 +155,10 @@ class ObjectiveOrchestrator:
         if trial is None:
             return
         trial.set_user_attr(FAILURE_STAGE_ATTR, stage)
+        trial.set_user_attr(LEGACY_FAILURE_STAGE_ATTR, stage)
         if reason:
             trial.set_user_attr(FAILURE_REASON_ATTR, reason)
+            trial.set_user_attr(LEGACY_FAILURE_REASON_ATTR, reason)
 
     @staticmethod
     def _cae_failure_violation(cae_result: CaeResult) -> float:

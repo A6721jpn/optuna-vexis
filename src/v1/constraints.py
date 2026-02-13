@@ -1,5 +1,5 @@
 """
-Proto4 Constraints
+v1.0 Constraints
 
 Hard / soft constraint checking and penalty computation.
 Replaces proto3 PenaltyConfig with a more structured approach.
