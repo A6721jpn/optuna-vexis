@@ -279,6 +279,7 @@ class CaeEvaluator:
         self._vexis_input = self._vexis_root / "input"
         self._vexis_results = self._vexis_root / "results"
         self._vexis_main = self._vexis_root / "main.py"
+        self._step_stash_root = self._vexis_input / ".optuna_step_stash"
 
         if self._cae_spec.stdout_log_dir:
             self._stdout_log_dir = Path(self._cae_spec.stdout_log_dir)
@@ -325,56 +326,136 @@ class CaeEvaluator:
     def _single_run(self, step_path: Path, job_name: str) -> CaeResult:
         """Execute one VEXIS run and compute metrics."""
         self._last_failure_reason = None
-        # Copy STEP to VEXIS input
-        self._vexis_input.mkdir(parents=True, exist_ok=True)
-        target_step = self._vexis_input / f"{job_name}.step"
-        shutil.copy2(step_path, target_step)
+        target_step: Optional[Path] = None
+        stash_dir: Optional[Path] = None
 
-        # Ensure stale CSV from a previous run cannot be reused as success.
-        stale_csv = self._vexis_results / f"{job_name}_result.csv"
-        if stale_csv.exists():
-            try:
-                stale_csv.unlink()
-            except OSError as exc:
-                logger.warning("Failed to remove stale result CSV %s: %s", stale_csv, exc)
-
-        # Run VEXIS subprocess
-        result_csv = self._run_subprocess(job_name)
-        if result_csv is None:
-            return CaeResult(
-                status=CaeStatus.FAIL,
-                failure_reason=self._last_failure_reason or "vexis_subprocess_failed",
-            )
-
-        # Load and process result
         try:
-            result_curve = load_curve(result_csv)
-        except (FileNotFoundError, ValueError) as exc:
-            logger.error("Failed to load result: %s", exc)
-            return CaeResult(
-                status=CaeStatus.FAIL,
-                failure_reason=f"result_load_failed:{exc.__class__.__name__}",
+            # Keep only the current trial STEP in vexis/input so VEXIS processes
+            # exactly one STEP per trial without changing VEXIS code.
+            target_step, stash_dir = self._prepare_single_step_input(step_path, job_name)
+
+            # Ensure stale CSV from a previous run cannot be reused as success.
+            stale_csv = self._vexis_results / f"{job_name}_result.csv"
+            if stale_csv.exists():
+                try:
+                    stale_csv.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to remove stale result CSV %s: %s", stale_csv, exc)
+
+            # Run VEXIS subprocess
+            result_csv = self._run_subprocess(job_name)
+            if result_csv is None:
+                return CaeResult(
+                    status=CaeStatus.FAIL,
+                    failure_reason=self._last_failure_reason or "vexis_subprocess_failed",
+                )
+
+            # Load and process result
+            try:
+                result_curve = load_curve(result_csv)
+            except (FileNotFoundError, ValueError) as exc:
+                logger.error("Failed to load result: %s", exc)
+                return CaeResult(
+                    status=CaeStatus.FAIL,
+                    failure_reason=f"result_load_failed:{exc.__class__.__name__}",
+                )
+
+            trimmed = extract_range(
+                result_curve,
+                self._cae_spec.stroke_range_min,
+                self._cae_spec.stroke_range_max,
             )
 
-        trimmed = extract_range(
-            result_curve,
-            self._cae_spec.stroke_range_min,
-            self._cae_spec.stroke_range_max,
-        )
+            # Compute metrics
+            metrics = self._compute_metrics(trimmed)
+            if metrics is None:
+                return CaeResult(
+                    status=CaeStatus.FAIL,
+                    failure_reason="metric_computation_failed",
+                )
 
-        # Compute metrics
-        metrics = self._compute_metrics(trimmed)
-        if metrics is None:
             return CaeResult(
-                status=CaeStatus.FAIL,
-                failure_reason="metric_computation_failed",
+                status=CaeStatus.SUCCESS,
+                metrics=metrics,
+                artifact_paths=[str(result_csv)],
             )
+        finally:
+            if target_step is not None and target_step.exists():
+                try:
+                    target_step.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to remove trial STEP %s: %s", target_step, exc)
+            if stash_dir is not None:
+                self._restore_stashed_steps(stash_dir)
 
-        return CaeResult(
-            status=CaeStatus.SUCCESS,
-            metrics=metrics,
-            artifact_paths=[str(result_csv)],
+    def _prepare_single_step_input(self, step_path: Path, job_name: str) -> tuple[Path, Path]:
+        """Move existing STEP files aside and place only the current trial STEP."""
+        self._vexis_input.mkdir(parents=True, exist_ok=True)
+        self._recover_orphaned_step_stash()
+
+        stash_dir = self._step_stash_root / f"{job_name}_{int(time.time() * 1000)}"
+        stash_dir.mkdir(parents=True, exist_ok=True)
+
+        moved = 0
+        try:
+            for existing_step in sorted(self._vexis_input.glob("*.step")):
+                existing_step.replace(stash_dir / existing_step.name)
+                moved += 1
+
+            target_step = self._vexis_input / f"{job_name}.step"
+            if target_step.exists():
+                target_step.unlink()
+            shutil.copy2(step_path, target_step)
+        except Exception:
+            self._restore_stashed_steps(stash_dir)
+            raise
+
+        logger.info(
+            "Isolated VEXIS input for %s: moved %d STEP(s), active=%s",
+            job_name,
+            moved,
+            target_step.name,
         )
+        return target_step, stash_dir
+
+    def _recover_orphaned_step_stash(self) -> None:
+        """Restore STEP files from a previous interrupted run, if any."""
+        if not self._step_stash_root.exists():
+            return
+        for stash_dir in sorted(p for p in self._step_stash_root.iterdir() if p.is_dir()):
+            logger.warning("Recovering orphaned STEP stash: %s", stash_dir)
+            self._restore_stashed_steps(stash_dir)
+
+    def _restore_stashed_steps(self, stash_dir: Path) -> None:
+        """Move stashed STEP files back into vexis/input."""
+        if not stash_dir.exists():
+            return
+
+        for stashed_step in sorted(stash_dir.glob("*.step")):
+            dest = self._vexis_input / stashed_step.name
+            if dest.exists():
+                conflict_dest = self._vexis_input / (
+                    f"{stashed_step.stem}.restored_conflict_{int(time.time() * 1000)}{stashed_step.suffix}"
+                )
+                logger.warning(
+                    "STEP restore conflict: %s exists, restored as %s",
+                    dest.name,
+                    conflict_dest.name,
+                )
+                stashed_step.replace(conflict_dest)
+            else:
+                stashed_step.replace(dest)
+
+        try:
+            stash_dir.rmdir()
+        except OSError:
+            pass
+
+        if self._step_stash_root.exists():
+            try:
+                self._step_stash_root.rmdir()
+            except OSError:
+                pass
 
     def _compute_metrics(self, result_curve: pd.DataFrame) -> Optional[dict[str, float]]:
         res_load, res_unload = split_cycle(result_curve)
