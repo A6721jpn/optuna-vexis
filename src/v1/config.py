@@ -23,6 +23,7 @@ class BoundsSpec:
     name: str
     min: float
     max: float
+    base_value: float = 1.0
 
 
 @dataclass
@@ -81,6 +82,7 @@ class ObjectiveSpec:
     include_rmse_in_multi: bool = True
     multi_objectives: list[str] = field(default_factory=list)
     multi_objectives_use_error: bool = True
+    target_values: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -103,6 +105,7 @@ class FreecadSpec:
     sketch_name: str = "Sketch001"
     surface_name: str = "Face"
     surface_label: str = "SURFACE"
+    constraints_domain: str = "ratio"
     constraints: dict[str, dict[str, float]] = field(default_factory=dict)
     step_output_dir: str = "input/step"
     step_filename_template: str = "v1_0_trial_{trial_id}.step"
@@ -172,6 +175,10 @@ def load_config(
         include_rmse_in_multi=bool(obj_raw.get("include_rmse_in_multi", True)),
         multi_objectives=[str(x) for x in obj_raw.get("multi_objectives", [])],
         multi_objectives_use_error=bool(obj_raw.get("multi_objectives_use_error", True)),
+        target_values={
+            str(k): float(v)
+            for k, v in (obj_raw.get("target_values", {}) or {}).items()
+        },
     )
 
     # --- Paths ---
@@ -198,6 +205,7 @@ def load_config(
         sketch_name=fc_raw.get("sketch_name", "Sketch001"),
         surface_name=fc_raw.get("surface_name", "Face"),
         surface_label=fc_raw.get("surface_label", "SURFACE"),
+        constraints_domain=str(fc_raw.get("constraints_domain", "ratio")).strip().lower(),
         constraints=constraints_raw,
         step_output_dir=fc_raw.get("step_output_dir", "input/step"),
         step_filename_template=fc_raw.get(
@@ -248,7 +256,14 @@ def load_config(
     bounds: list[BoundsSpec] = []
     for name, spec in constraints_raw.items():
         if isinstance(spec, dict) and "min" in spec and "max" in spec:
-            bounds.append(BoundsSpec(name=name, min=float(spec["min"]), max=float(spec["max"])))
+            bounds.append(
+                BoundsSpec(
+                    name=name,
+                    min=float(spec["min"]),
+                    max=float(spec["max"]),
+                    base_value=float(spec.get("base_value", 1.0)),
+                )
+            )
 
     cfg = V1Config(
         optimization=optimization,
@@ -271,6 +286,10 @@ def _validate(cfg: V1Config) -> None:
     """Raise on obviously invalid configuration."""
     if not cfg.bounds:
         raise ValueError("No design variables defined in freecad.constraints")
+    if cfg.freecad.constraints_domain not in {"ratio", "physical"}:
+        raise ValueError(
+            "freecad.constraints_domain must be 'ratio' or 'physical'"
+        )
     for b in cfg.bounds:
         if b.min >= b.max:
             raise ValueError(f"Invalid bounds for {b.name}: min={b.min} >= max={b.max}")
@@ -304,6 +323,14 @@ def _validate(cfg: V1Config) -> None:
                     f"Unknown multi objective '{name}'. "
                     f"Define it under objective.features first."
                 )
+        for name, value in cfg.objective.target_values.items():
+            if name not in feature_names:
+                raise ValueError(
+                    f"Unknown target_values key '{name}'. "
+                    f"Define it under objective.features first."
+                )
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"objective.target_values['{name}'] must be numeric")
         n_obj = len(objective_names) + (1 if cfg.objective.include_rmse_in_multi else 0)
         n_obj = max(1, n_obj)
         if len(cfg.optimization.directions) not in (1, n_obj):

@@ -7,90 +7,94 @@ freecad:
   sketch_name: "Sketch"
   surface_name: "Face"
   surface_label: "SURFACE"
+  # constraints の min/max の解釈:
+  # - "ratio": 基準値に対する比率（従来互換）
+  # - "physical": 実寸法値（mm / rad）。内部で base_value で割って比率化して扱う
+  constraints_domain: "physical"
   
   # 20次元パラメータ（ai-v0 SafetyPredictor対応）
-  # 各パラメータは基準値に対する比率 (1.0 = 基準値)
+  # 各パラメータは実寸法（mm / rad）
   constraints:
     CROWN-D-L:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.741
+      max: 0.819
+      base_value: 0.78
     CROWN-D-H:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.741
+      max: 0.819
+      base_value: 0.78
     CROWN-W:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.8075
+      max: 0.8925
+      base_value: 0.85
     PUSHER-D-H:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.57
+      max: 0.63
+      base_value: 0.6
     PUSHER-D-L:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.57
+      max: 0.63
+      base_value: 0.6
     TIP-D:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.2375
+      max: 0.2625
+      base_value: 0.25
     STROKE-OUT:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.931
+      max: 1.029
+      base_value: 0.98
     STROKE-CENTER:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.931
+      max: 1.029
+      base_value: 0.98
     FOOT-W:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.7315
+      max: 0.8085
+      base_value: 0.77
     FOOT-MID:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.589
+      max: 0.651
+      base_value: 0.62
     SHOULDER-ANGLE-OUT:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 2.073407518
+      max: 2.291660941
+      base_value: 2.18253423
     SHOULDER-ANGLE-IN:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.949240947
+      max: 1.049161047
+      base_value: 0.999200997
     TOP-T:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.5225
+      max: 0.5775
+      base_value: 0.55
     TOP-DROP:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.3325
+      max: 0.3675
+      base_value: 0.35
     FOOT-IN:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.589
+      max: 0.651
+      base_value: 0.62
     DIAMETER:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 1.881
+      max: 2.079
+      base_value: 1.98
     HEIGHT:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 2.5175
+      max: 2.7825
+      base_value: 2.65
     TIP-DROP:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.0665
+      max: 0.0735
+      base_value: 0.07
     SHOUDER-T:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.285
+      max: 0.315
+      base_value: 0.3
     FOOT-OUT:
-      min: 0.95
-      max: 1.05
-      base_value: 1.0
+      min: 0.589
+      max: 0.651
+      base_value: 0.62
 
   step_output_dir: "input/step"
   step_filename_template: "v1_0_trial_{trial_id}.step"

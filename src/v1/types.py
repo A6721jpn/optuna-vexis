@@ -30,9 +30,13 @@ class DesignPoint:
 
     trial_id: int
     params: dict[str, float]
+    physical_params: Optional[dict[str, float]] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"trial_id": self.trial_id, "params": dict(self.params)}
+        payload: dict[str, Any] = {"trial_id": self.trial_id, "params": dict(self.params)}
+        if self.physical_params is not None:
+            payload["physical_params"] = dict(self.physical_params)
+        return payload
 
 
 @dataclass
@@ -62,6 +66,8 @@ class CaeResult:
     runtime_sec: float = 0.0
     artifact_paths: list[str] = field(default_factory=list)
     failure_reason: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -72,6 +78,10 @@ class CaeResult:
         }
         if self.failure_reason:
             payload["failure_reason"] = self.failure_reason
+        if self.started_at:
+            payload["started_at"] = self.started_at
+        if self.finished_at:
+            payload["finished_at"] = self.finished_at
         return payload
 
 

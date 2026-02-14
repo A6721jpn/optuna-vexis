@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+import math
 import logging
 import sys
 from datetime import datetime
@@ -43,6 +44,84 @@ from .types import DesignPoint
 from .versioning import get_version_info
 
 logger = logging.getLogger(__name__)
+
+
+def _objective_metric_key(cfg, name: str) -> str:
+    if cfg.objective.multi_objectives_use_error or name in cfg.objective.target_values:
+        return f"{name}_error"
+    return name
+
+
+def _adjust_multi_directions_for_targets(
+    cfg,
+    directions: list[str],
+    objective_names: list[str],
+) -> list[str]:
+    adjusted = list(directions)
+    idx = 0
+    if cfg.objective.include_rmse_in_multi:
+        idx += 1
+    for name in objective_names:
+        if idx >= len(adjusted):
+            break
+        metric_key = _objective_metric_key(cfg, name)
+        if metric_key.endswith("_error") and adjusted[idx] == "maximize":
+            logger.warning(
+                "Direction for %s changed maximize->minimize "
+                "because target optimization uses error distance",
+                metric_key,
+            )
+            adjusted[idx] = "minimize"
+        idx += 1
+    return adjusted
+
+
+def _convert_physical_bounds_to_ratio(cfg) -> None:
+    """Convert physical-domain bounds into ratio-domain bounds in-place.
+
+    When ``freecad.constraints_domain`` is ``physical``, values in
+    ``freecad.constraints[*].min/max`` are interpreted as real dimensions.
+    Optuna / CAD gate / hard-constraint checks still operate in ratio domain,
+    so we convert using each bound's resolved ``base_value``.
+    """
+    if getattr(cfg.freecad, "constraints_domain", "ratio") != "physical":
+        return
+
+    converted = 0
+    skipped: list[str] = []
+    for b in cfg.bounds:
+        try:
+            base = float(b.base_value)
+            raw_min = float(b.min)
+            raw_max = float(b.max)
+        except (TypeError, ValueError):
+            skipped.append(b.name)
+            continue
+        if not math.isfinite(base) or base == 0.0:
+            skipped.append(b.name)
+            continue
+
+        ratio_min = raw_min / base
+        ratio_max = raw_max / base
+        if ratio_min <= ratio_max:
+            b.min = ratio_min
+            b.max = ratio_max
+        else:
+            b.min = ratio_max
+            b.max = ratio_min
+        converted += 1
+
+    logger.info(
+        "Converted physical constraints to ratio domain: %d/%d dimensions",
+        converted,
+        len(cfg.bounds),
+    )
+    if skipped:
+        logger.warning(
+            "Skipped ratio conversion for %d dimensions due to invalid base/min/max: %s",
+            len(skipped),
+            ", ".join(sorted(skipped)),
+        )
 
 
 # ------------------------------------------------------------------
@@ -185,8 +264,14 @@ def main() -> int:
                     n_obj,
                 )
                 directions = ["minimize"] * n_obj
+            directions = _adjust_multi_directions_for_targets(
+                cfg,
+                directions,
+                objective_names,
+            )
         else:
             directions = [cfg.optimization.directions[0]]
+        cfg.optimization.directions = list(directions)
 
         # Paths
         result_dir = project_root / cfg.paths.result_dir
@@ -210,6 +295,8 @@ def main() -> int:
             else {}
         )
         target_features = extract_features(target_curve, feat_cfg) if feat_cfg else {}
+        for name, target in cfg.objective.target_values.items():
+            target_features[name] = float(target)
 
         # --- Components ---
         persistence = TrialPersistence(result_dir)
@@ -227,7 +314,35 @@ def main() -> int:
                 cad_gate._load_error or "unknown",
             )
             return 1
-        geometry_adapter = GeometryAdapter(cfg.freecad, project_root)
+        geometry_adapter = GeometryAdapter(
+            cfg.freecad,
+            project_root,
+            cfg.optimization,
+        )
+        try:
+            base_values = geometry_adapter.probe_base_values([b.name for b in cfg.bounds])
+            updated = 0
+            for b in cfg.bounds:
+                if b.name not in base_values:
+                    continue
+                base = float(base_values[b.name])
+                if not math.isfinite(base) or base == 0.0:
+                    continue
+                b.base_value = base
+                updated += 1
+            logger.info(
+                "Resolved physical base values from FCStd: %d/%d dimensions",
+                updated,
+                len(cfg.bounds),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve physical base values from FCStd; "
+                "falling back to configured base_value (reason=%s)",
+                exc,
+            )
+        _convert_physical_bounds_to_ratio(cfg)
+
         cae_evaluator = CaeEvaluator(
             vexis_path=project_root / cfg.paths.vexis_path,
             cae_spec=cfg.cae,

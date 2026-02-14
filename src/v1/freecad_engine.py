@@ -96,6 +96,7 @@ class ConstraintSpec:
     base_value: float
     sketch: Optional[Any] = None
     angle_unit: Optional[str] = None  # "rad" or "deg"
+    physical_step: Optional[float] = None
 
 
 class FreecadEngine:
@@ -170,7 +171,16 @@ class FreecadEngine:
                 continue
             
             ratio = params[spec.name]
-            sketch_value = self._clamp_candidate(spec.ctype, spec.base_value * ratio, spec.angle_unit)
+            raw_physical_value = spec.base_value * ratio
+            quantized_physical_value = self._quantize_physical_value(
+                raw_physical_value,
+                spec.physical_step,
+            )
+            sketch_value = self._clamp_candidate(
+                spec.ctype,
+                quantized_physical_value,
+                spec.angle_unit,
+            )
             
             if sketch_value is None:
                 logger.warning("Invalid value for %s: ratio=%.3f", spec.name, ratio)
@@ -220,6 +230,17 @@ class FreecadEngine:
             return False
 
         return True
+
+    @staticmethod
+    def _quantize_physical_value(value: float, step: Optional[float]) -> float:
+        if step is None:
+            return value
+        if not math.isfinite(step) or step <= 0:
+            return value
+        q = round(value / step) * step
+        step_str = f"{step:.12f}".rstrip("0")
+        digits = len(step_str.split(".")[1]) if "." in step_str else 0
+        return round(q, digits)
 
     def export_step(self, output_path: Path) -> Path:
         """Export current geometry to STEP file.

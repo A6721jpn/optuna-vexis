@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -64,6 +64,38 @@ def _load_trial_records(result_dir: Path) -> dict[int, dict[str, Any]]:
     return trial_records
 
 
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _first_cae_started_at(trial_records: dict[int, dict[str, Any]]) -> Optional[datetime]:
+    candidates: list[datetime] = []
+    for rec in trial_records.values():
+        cae_result = rec.get("cae_result")
+        if not isinstance(cae_result, dict):
+            continue
+        started_at = _parse_iso_datetime(cae_result.get("started_at"))
+        if started_at is None:
+            saved_at = _parse_iso_datetime(rec.get("saved_at"))
+            runtime_sec = cae_result.get("runtime_sec")
+            if (
+                saved_at is not None
+                and isinstance(runtime_sec, (int, float))
+                and float(runtime_sec) >= 0.0
+            ):
+                started_at = saved_at - timedelta(seconds=float(runtime_sec))
+        if started_at is not None:
+            candidates.append(started_at)
+    if not candidates:
+        return None
+    return min(candidates)
+
+
 def _objective_labels(cfg: V1Config, study: optuna.study.Study) -> list[str]:
     if cfg.optimization.objective_type != "multi":
         return ["rmse"] if len(study.directions) == 1 else [
@@ -76,7 +108,10 @@ def _objective_labels(cfg: V1Config, study: optuna.study.Study) -> list[str]:
 
     objective_names = cfg.objective.multi_objectives or list(cfg.objective.features.keys())
     for name in objective_names:
-        if cfg.objective.multi_objectives_use_error:
+        if (
+            cfg.objective.multi_objectives_use_error
+            or name in cfg.objective.target_values
+        ):
             labels.append(f"{name}_error")
         else:
             labels.append(name)
@@ -401,12 +436,76 @@ def _collect_table_columns(
     return param_names, objective_cols, metric_names
 
 
+def _param_ratio_to_physical(
+    *,
+    cfg: V1Config,
+    bounds_by_name: dict[str, Any],
+    name: str,
+    ratio_value: Any,
+) -> Any:
+    if ratio_value is None:
+        return None
+
+    try:
+        ratio = float(ratio_value)
+    except (TypeError, ValueError):
+        return ratio_value
+
+    bound = bounds_by_name.get(name)
+    if bound is None:
+        return ratio
+
+    try:
+        base = float(bound.base_value)
+    except (TypeError, ValueError):
+        base = 1.0
+    if not math.isfinite(base) or base == 0.0:
+        base = 1.0
+
+    value = ratio * base
+    step = _physical_step_for_param(cfg, name)
+    return _quantized_physical_value(value, step)
+
+
+def _physical_step_for_param(cfg: V1Config, name: str) -> Optional[float]:
+    if cfg.optimization.enable_dimension_discretization:
+        token = cfg.optimization.angle_name_token.upper()
+        is_angle = bool(token) and token in name.upper()
+        step = cfg.optimization.angle_step if is_angle else cfg.optimization.non_angle_step
+        if step > 0:
+            return step
+        return None
+    if cfg.optimization.discretization_step is not None:
+        try:
+            step = float(cfg.optimization.discretization_step)
+        except (TypeError, ValueError):
+            return None
+        if step > 0:
+            return step
+    return None
+
+
+def _quantized_physical_value(value: Any, step: Optional[float]) -> Any:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return value
+    if not math.isfinite(v) or step is None or step <= 0:
+        return v
+
+    q = round(v / step) * step
+    step_txt = f"{step:.12f}".rstrip("0")
+    digits = len(step_txt.split(".")[1]) if "." in step_txt else 0
+    return round(q, digits)
+
+
 def _build_iteration_table(
     cfg: V1Config,
     study: optuna.study.Study,
     trial_records: dict[int, dict[str, Any]],
 ) -> str:
     param_names, objective_cols, metric_names = _collect_table_columns(cfg, study, trial_records)
+    bounds_by_name = {b.name: b for b in cfg.bounds}
     headers = [
         "trial_id",
         "outcome",
@@ -429,8 +528,33 @@ def _build_iteration_table(
         value_cells = [_fmt(values[i]) if i < len(values) else "-" for i in range(len(objective_cols))]
         metrics = rec.get("objective_values") or {}
         metric_cells = [_fmt(metrics.get(name)) for name in metric_names]
-        params = trial.params or (rec.get("design_point") or {}).get("params", {})
-        param_cells = [_fmt(params.get(name)) for name in param_names]
+        design_point = rec.get("design_point") or {}
+        params = trial.params or design_point.get("params", {})
+        recorded_physical = design_point.get("physical_params", {})
+        if not isinstance(recorded_physical, dict):
+            recorded_physical = {}
+        param_cells = []
+        for name in param_names:
+            if name in recorded_physical:
+                param_cells.append(
+                    _fmt(
+                        _quantized_physical_value(
+                            recorded_physical.get(name),
+                            _physical_step_for_param(cfg, name),
+                        )
+                    )
+                )
+                continue
+            param_cells.append(
+                _fmt(
+                    _param_ratio_to_physical(
+                        cfg=cfg,
+                        bounds_by_name=bounds_by_name,
+                        name=name,
+                        ratio_value=params.get(name),
+                    )
+                )
+            )
         row = [
             str(trial.number),
             rec.get("outcome", "-"),
@@ -464,6 +588,7 @@ def generate_markdown_report(
     assets_dir.mkdir(parents=True, exist_ok=True)
 
     trial_records = _load_trial_records(result_dir)
+    report_start_time = _first_cae_started_at(trial_records) or start_time
     total_trials = len(study.trials)
     cae_success = sum(
         1
@@ -509,7 +634,7 @@ def generate_markdown_report(
     lines.append("# Production v1.0 最適化レポート")
     lines.append("")
     lines.append(f"- 生成時刻: {datetime.now().isoformat()}")
-    lines.append(f"- 実行開始: {start_time.isoformat()}")
+    lines.append(f"- 実行開始: {report_start_time.isoformat()}")
     lines.append(f"- 実行終了: {end_time.isoformat()}")
     lines.append("")
 
@@ -555,6 +680,8 @@ def generate_markdown_report(
     lines.append("")
 
     lines.append("## 3. 各イテレーションの特徴量と評価関数結果")
+    lines.append("")
+    lines.append("- 寸法パラメータ列は標準化前（実寸）の値です。")
     lines.append("")
     lines.append(_build_iteration_table(cfg, study, trial_records))
     lines.append("")

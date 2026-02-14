@@ -60,6 +60,12 @@ objective:
   type: "multi"
   include_rmse_in_multi: false
   multi_objectives_use_error: false
+  # 目標値を指定した特徴量は、自動的に「目標との差（*_error）」を最適化対象にします。
+  # directions が maximize の場合でも内部で minimize に補正して、
+  # 目標値へ近づく向きで最適化します。
+  target_values:
+    click_ratio: 0.4
+    peak_force: 0.70
   multi_objectives: ["click_ratio", "peak_force"]
   
   # 多目的最適化時の重み

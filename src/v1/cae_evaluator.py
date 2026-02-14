@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -247,6 +248,19 @@ def extract_features(df: pd.DataFrame, feature_config: dict) -> dict[str, float]
     return features
 
 
+def feature_error(actual: Optional[float], target: float) -> float:
+    """Compute distance-to-target error for feature optimization.
+
+    - If target is non-zero: relative error |a-t|/|t|
+    - If target is zero: absolute error |a-t|
+    """
+    if actual is None:
+        return 1.0
+    if abs(target) > 1e-10:
+        return abs(actual - target) / abs(target)
+    return abs(actual - target)
+
+
 # ---------------------------------------------------------------------------
 # VEXIS subprocess runner (from proto3 vexis_runner)
 # ---------------------------------------------------------------------------
@@ -299,12 +313,15 @@ class CaeEvaluator:
         job_name = f"v1_0_trial_{point.trial_id}"
         retries = max(1, self._cae_spec.max_retries)
         result = CaeResult(status=CaeStatus.FAIL, failure_reason="cae_not_started")
+        first_cae_started_at = datetime.now().isoformat()
 
         for attempt in range(1, retries + 1):
             t0 = time.time()
             result = self._single_run(step_path, job_name)
             elapsed = time.time() - t0
             result.runtime_sec = elapsed
+            result.started_at = first_cae_started_at
+            result.finished_at = datetime.now().isoformat()
 
             if result.status == CaeStatus.SUCCESS:
                 return result
@@ -483,10 +500,7 @@ class CaeEvaluator:
                 metrics[name] = float(actual)
             for name, target_val in self._target_features.items():
                 actual = result_feats.get(name)
-                if actual is not None and abs(target_val) > 1e-10:
-                    metrics[f"{name}_error"] = abs(actual - target_val) / abs(target_val)
-                else:
-                    metrics[f"{name}_error"] = 1.0
+                metrics[f"{name}_error"] = feature_error(actual, target_val)
 
         # Weighted score
         weights = self._obj_spec.weights

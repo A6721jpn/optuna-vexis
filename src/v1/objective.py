@@ -75,7 +75,10 @@ class ObjectiveOrchestrator:
         return list(self._cfg.objective.features.keys())
 
     def _metric_key_for_objective(self, name: str) -> str:
-        if self._cfg.objective.multi_objectives_use_error:
+        if (
+            self._cfg.objective.multi_objectives_use_error
+            or name in self._cfg.objective.target_values
+        ):
             return f"{name}_error"
         return name
 

@@ -42,10 +42,46 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--constraints-json", required=True)
     p.add_argument("--params-json", required=True)
     p.add_argument("--step-path", required=True)
+    p.add_argument("--dump-base-values-json", required=False, default=None)
+    p.add_argument("--enable-dimension-discretization", required=False, default="false")
+    p.add_argument("--non-angle-step", required=False, type=float, default=0.01)
+    p.add_argument("--angle-step", required=False, type=float, default=0.001)
+    p.add_argument("--angle-name-token", required=False, default="ANGLE")
+    p.add_argument("--discretization-step", required=False, type=float, default=None)
     return p
 
 
-def _build_constraint_specs(engine, constraint_names: list[str], ConstraintSpec):
+def _str_to_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _physical_step_for_constraint(
+    *,
+    name: str,
+    enable_dimension_discretization: bool,
+    non_angle_step: float,
+    angle_step: float,
+    angle_name_token: str,
+    discretization_step: float | None,
+) -> float | None:
+    if enable_dimension_discretization:
+        token = angle_name_token.upper()
+        is_angle = bool(token) and token in name.upper()
+        return angle_step if is_angle else non_angle_step
+    return discretization_step
+
+
+def _build_constraint_specs(
+    engine,
+    constraint_names: list[str],
+    ConstraintSpec,
+    *,
+    enable_dimension_discretization: bool,
+    non_angle_step: float,
+    angle_step: float,
+    angle_name_token: str,
+    discretization_step: float | None,
+):
     sketch = engine._sketch
     if sketch is None:
         raise RuntimeError("Sketch not loaded")
@@ -77,6 +113,14 @@ def _build_constraint_specs(engine, constraint_names: list[str], ConstraintSpec)
             ctype=ctype,
             base_value=current_val,
             angle_unit="rad" if ctype == "Angle" else None,
+            physical_step=_physical_step_for_constraint(
+                name=name,
+                enable_dimension_discretization=enable_dimension_discretization,
+                non_angle_step=non_angle_step,
+                angle_step=angle_step,
+                angle_name_token=angle_name_token,
+                discretization_step=discretization_step,
+            ),
         )
         specs.append(spec)
     return specs
@@ -85,6 +129,7 @@ def _build_constraint_specs(engine, constraint_names: list[str], ConstraintSpec)
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[freecad-worker] %(message)s")
     args = _build_parser().parse_args()
+    enable_dimension_discretization = _str_to_bool(args.enable_dimension_discretization)
 
     mod = _load_freecad_engine_module()
     FreecadEngine = mod.FreecadEngine
@@ -110,7 +155,26 @@ def main() -> int:
     )
     try:
         engine.open()
-        specs = _build_constraint_specs(engine, constraint_names, ConstraintSpec)
+        specs = _build_constraint_specs(
+            engine,
+            constraint_names,
+            ConstraintSpec,
+            enable_dimension_discretization=enable_dimension_discretization,
+            non_angle_step=float(args.non_angle_step),
+            angle_step=float(args.angle_step),
+            angle_name_token=str(args.angle_name_token),
+            discretization_step=args.discretization_step,
+        )
+        if args.dump_base_values_json:
+            payload = {spec.name: float(spec.base_value) for spec in specs}
+            out_path = Path(args.dump_base_values_json)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            print(out_path)
+            return 0
         engine.set_constraints(specs)
         if not engine.apply_ratios(params):
             raise RuntimeError("FreeCAD recompute/validation failed")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from .config import FreecadSpec
+from .config import FreecadSpec, OptimizationSpec
 from .types import DesignPoint
 
 logger = logging.getLogger(__name__)
@@ -30,9 +31,15 @@ class GeometryError(RuntimeError):
 class GeometryAdapter:
     """Generate STEP geometry from a DesignPoint via FreeCAD subprocess."""
 
-    def __init__(self, spec: FreecadSpec, project_root: Path) -> None:
+    def __init__(
+        self,
+        spec: FreecadSpec,
+        project_root: Path,
+        optimization: Optional[OptimizationSpec] = None,
+    ) -> None:
         self._spec = spec
         self._project_root = project_root
+        self._optimization = optimization
         self._fcstd_path = project_root / spec.fcstd_path
         self._step_output_dir = project_root / spec.step_output_dir
         self._engine = None  # compatibility no-op
@@ -113,7 +120,24 @@ class GeometryAdapter:
                 str(params_json),
                 "--step-path",
                 str(step_path),
+                "--enable-dimension-discretization",
+                str(
+                    bool(self._optimization.enable_dimension_discretization)
+                    if self._optimization is not None
+                    else False
+                ).lower(),
+                "--non-angle-step",
+                str(self._optimization.non_angle_step if self._optimization is not None else 0.01),
+                "--angle-step",
+                str(self._optimization.angle_step if self._optimization is not None else 0.001),
+                "--angle-name-token",
+                str(self._optimization.angle_name_token if self._optimization is not None else "ANGLE"),
             ]
+            if self._optimization is not None and self._optimization.discretization_step is not None:
+                cmd.extend([
+                    "--discretization-step",
+                    str(self._optimization.discretization_step),
+                ])
 
             logger.info("FreeCAD worker run: %s", " ".join(cmd))
             try:
@@ -139,6 +163,98 @@ class GeometryAdapter:
                     f"FreeCAD worker failed for trial {point.trial_id} "
                     f"(exit={proc.returncode}): {detail}"
                 )
+
+    def probe_base_values(self, constraint_names: list[str]) -> dict[str, float]:
+        """Read current sketch constraint values (physical domain) from FCStd."""
+        if not self._fcstd_path.exists():
+            raise GeometryError(f"FCStd not found: {self._fcstd_path}")
+
+        worker = self._worker_script_path()
+        if not worker.exists():
+            raise GeometryError(f"FreeCAD worker script not found: {worker}")
+
+        freecad_python = self._resolve_freecad_python()
+        timeout_sec = self._spec.timeout_sec if self._spec.timeout_sec > 0 else None
+
+        with tempfile.TemporaryDirectory(prefix="v1_0_probe_base_") as tmpdir:
+            tmp = Path(tmpdir)
+            constraints_json = tmp / "constraints.json"
+            params_json = tmp / "params.json"
+            step_path = tmp / "probe_unused.step"
+            out_json = tmp / "base_values.json"
+
+            constraints_payload = {
+                name: self._spec.constraints.get(name, {})
+                for name in constraint_names
+            }
+            constraints_json.write_text(
+                json.dumps(constraints_payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            params_json.write_text("{}", encoding="utf-8")
+
+            cmd = [
+                str(freecad_python),
+                str(worker),
+                "--fcstd-path",
+                str(self._fcstd_path),
+                "--sketch-name",
+                str(self._spec.sketch_name),
+                "--surface-name",
+                str(getattr(self._spec, "surface_name", "Face")),
+                "--surface-label",
+                str(getattr(self._spec, "surface_label", "SURFACE")),
+                "--constraints-json",
+                str(constraints_json),
+                "--params-json",
+                str(params_json),
+                "--step-path",
+                str(step_path),
+                "--dump-base-values-json",
+                str(out_json),
+            ]
+
+            logger.info("FreeCAD base-value probe run: %s", " ".join(cmd))
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    cwd=str(self._project_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout_sec,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise GeometryError(
+                    f"FreeCAD base-value probe timeout after {timeout_sec}s"
+                ) from exc
+
+            if proc.returncode != 0:
+                stderr = (proc.stderr or "").strip()
+                stdout = (proc.stdout or "").strip()
+                detail = stderr or stdout or "no output"
+                raise GeometryError(
+                    f"FreeCAD base-value probe failed (exit={proc.returncode}): {detail}"
+                )
+
+            if not out_json.exists():
+                raise GeometryError(f"Base-value dump not found: {out_json}")
+
+            raw = json.loads(out_json.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise GeometryError("Invalid base-value dump format")
+
+            out: dict[str, float] = {}
+            for key, value in raw.items():
+                try:
+                    v = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(v):
+                    continue
+                out[str(key)] = v
+            return out
 
     def generate_step(self, point: DesignPoint) -> Path:
         """Update FreeCAD constraints and export STEP."""

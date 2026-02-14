@@ -14,6 +14,7 @@ Key additions over proto3:
 from __future__ import annotations
 
 import logging
+import math
 import warnings
 from typing import Any, Callable, Optional, Sequence
 
@@ -92,6 +93,137 @@ def make_constraints_func() -> Callable[[FrozenTrial], Sequence[float]]:
 # Static search-space builder
 # ------------------------------------------------------------------
 
+def _base_value_for_bound(bound: BoundsSpec) -> float:
+    try:
+        base = float(bound.base_value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(base) or base == 0.0:
+        return 1.0
+    return base
+
+
+def _physical_discretization_step(
+    bound: BoundsSpec,
+    optimization: Optional[OptimizationSpec] = None,
+    discretization_step: Optional[float] = None,
+) -> Optional[float]:
+    physical_step: float | None = None
+    angle_token = ""
+    if optimization is not None:
+        angle_token = optimization.angle_name_token.upper()
+
+    if optimization is not None and optimization.enable_dimension_discretization:
+        is_angle = bool(angle_token) and angle_token in bound.name.upper()
+        physical_step = optimization.angle_step if is_angle else optimization.non_angle_step
+    elif discretization_step is not None:
+        # Backward compatibility: legacy step is now interpreted in physical domain.
+        physical_step = discretization_step
+
+    if physical_step is None:
+        return None
+
+    try:
+        step = float(physical_step)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(step) or step <= 0.0:
+        return None
+    return step
+
+
+def _ratio_sampling_spec(
+    bound: BoundsSpec,
+    optimization: Optional[OptimizationSpec] = None,
+    discretization_step: Optional[float] = None,
+) -> tuple[float, float, Optional[float], Optional[float]]:
+    """Return ratio-domain (low, high, step) aligned to physical-step grid.
+
+    The physical grid is anchored at multiples of `physical_step` (e.g. 0.01),
+    not at the ratio lower bound.
+    """
+    ratio_lo = float(bound.min)
+    ratio_hi = float(bound.max)
+    if ratio_lo > ratio_hi:
+        ratio_lo, ratio_hi = ratio_hi, ratio_lo
+
+    physical_step = _physical_discretization_step(
+        bound,
+        optimization=optimization,
+        discretization_step=discretization_step,
+    )
+    if physical_step is None:
+        return ratio_lo, ratio_hi, None, None
+
+    base = _base_value_for_bound(bound)
+    abs_base = abs(base)
+    if abs_base <= 0.0:
+        return ratio_lo, ratio_hi, None, physical_step
+
+    physical_lo = min(ratio_lo * base, ratio_hi * base)
+    physical_hi = max(ratio_lo * base, ratio_hi * base)
+    tol = physical_step * 1e-9
+    idx_lo = math.ceil((physical_lo - tol) / physical_step)
+    idx_hi = math.floor((physical_hi + tol) / physical_step)
+
+    # If no grid point falls inside bounds, fall back to continuous ratio domain.
+    if idx_lo > idx_hi:
+        logger.warning(
+            "No physical discretization grid point for %s in [%.6g, %.6g] with step=%.6g; "
+            "fallback to continuous sampling",
+            bound.name,
+            physical_lo,
+            physical_hi,
+            physical_step,
+        )
+        return ratio_lo, ratio_hi, None, physical_step
+
+    grid_lo = idx_lo * physical_step
+    grid_hi = idx_hi * physical_step
+    ratio_grid_lo = grid_lo / base
+    ratio_grid_hi = grid_hi / base
+    if ratio_grid_lo <= ratio_grid_hi:
+        ratio_lo_adj = ratio_grid_lo
+        ratio_hi_adj = ratio_grid_hi
+    else:
+        ratio_lo_adj = ratio_grid_hi
+        ratio_hi_adj = ratio_grid_lo
+
+    ratio_step = physical_step / abs_base
+    span = ratio_hi_adj - ratio_lo_adj
+    if span <= 0.0 or ratio_step > span:
+        return ratio_lo_adj, ratio_hi_adj, None, physical_step
+    return ratio_lo_adj, ratio_hi_adj, ratio_step, physical_step
+
+
+def _step_decimal_digits(step: float) -> int:
+    s = f"{step:.12f}".rstrip("0")
+    if "." in s:
+        return len(s.split(".")[1])
+    return 0
+
+
+def _ratio_to_physical_value(
+    bound: BoundsSpec,
+    ratio_value: float,
+    *,
+    physical_step: Optional[float] = None,
+) -> float:
+    base = _base_value_for_bound(bound)
+    physical = float(ratio_value) * base
+    if physical_step is None:
+        return physical
+
+    snapped = round(physical / physical_step) * physical_step
+    low = min(float(bound.min) * base, float(bound.max) * base)
+    high = max(float(bound.min) * base, float(bound.max) * base)
+    if snapped < low:
+        snapped = low
+    elif snapped > high:
+        snapped = high
+    return round(snapped, _step_decimal_digits(physical_step))
+
+
 def build_fixed_search_space(
     bounds: list[BoundsSpec],
     optimization: Optional[OptimizationSpec] = None,
@@ -105,18 +237,13 @@ def build_fixed_search_space(
     """
 
     space: dict[str, BaseDistribution] = {}
-    angle_token = ""
-    if optimization is not None:
-        angle_token = optimization.angle_name_token.upper()
-
     for b in bounds:
-        step: float | None = None
-        if optimization is not None and optimization.enable_dimension_discretization:
-            is_angle = bool(angle_token) and angle_token in b.name.upper()
-            step = optimization.angle_step if is_angle else optimization.non_angle_step
-        elif discretization_step is not None:
-            step = discretization_step
-        space[b.name] = FloatDistribution(low=b.min, high=b.max, step=step)
+        low, high, step, _ = _ratio_sampling_spec(
+            b,
+            optimization=optimization,
+            discretization_step=discretization_step,
+        )
+        space[b.name] = FloatDistribution(low=low, high=high, step=step)
 
     return space
 
@@ -502,19 +629,42 @@ def suggest_design_point(
         )
 
     params: dict[str, float] = {}
-    angle_token = ""
-    if optimization is not None:
-        angle_token = optimization.angle_name_token.upper()
+    physical_params: dict[str, float] = {}
     for b in bounds:
-        if optimization is not None and optimization.enable_dimension_discretization:
-            is_angle = angle_token and angle_token in b.name.upper()
-            step = optimization.angle_step if is_angle else optimization.non_angle_step
-            params[b.name] = trial.suggest_float(b.name, b.min, b.max, step=step)
-        elif discretization_step is not None:
+        ratio_low, ratio_high, ratio_step, physical_step = _ratio_sampling_spec(
+            b,
+            optimization=optimization,
+            discretization_step=discretization_step,
+        )
+        if ratio_low == ratio_high:
+            params[b.name] = ratio_low
+            physical_params[b.name] = _ratio_to_physical_value(
+                b,
+                params[b.name],
+                physical_step=physical_step,
+            )
+            continue
+        if ratio_step is not None:
             params[b.name] = trial.suggest_float(
-                b.name, b.min, b.max, step=discretization_step
+                b.name,
+                ratio_low,
+                ratio_high,
+                step=ratio_step,
             )
         else:
-            params[b.name] = trial.suggest_float(b.name, b.min, b.max)
+            params[b.name] = trial.suggest_float(
+                b.name,
+                ratio_low,
+                ratio_high,
+            )
+        physical_params[b.name] = _ratio_to_physical_value(
+            b,
+            params[b.name],
+            physical_step=physical_step,
+        )
 
-    return DesignPoint(trial_id=trial_id, params=params)
+    return DesignPoint(
+        trial_id=trial_id,
+        params=params,
+        physical_params=physical_params,
+    )
