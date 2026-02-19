@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -120,6 +121,86 @@ def _read_text_if_exists(path: Path) -> str:
         return ""
 
 
+def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_json_lock(
+    lock_path: Path,
+    *,
+    lock_scope: str,
+    details: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_id = f"{os.getpid()}-{int(time.time() * 1000)}"
+    payload = {
+        "lock_id": lock_id,
+        "scope": lock_scope,
+        "pid": os.getpid(),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "details": details,
+    }
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    # Try once, and if stale lock is found, clear and retry once more.
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            existing = _read_json_if_exists(lock_path)
+            existing_pid = int(existing.get("pid", 0)) if isinstance(existing, dict) else 0
+            if existing and not _pid_exists(existing_pid):
+                try:
+                    lock_path.unlink()
+                    continue
+                except OSError:
+                    pass
+            return None, existing
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload_text)
+            return lock_id, None
+    return None, _read_json_if_exists(lock_path)
+
+
+def _release_json_lock(lock_path: Path, lock_id: str | None) -> None:
+    if not lock_id:
+        return
+    existing = _read_json_if_exists(lock_path)
+    if not existing:
+        return
+    if str(existing.get("lock_id")) != str(lock_id):
+        return
+    try:
+        lock_path.unlink()
+    except OSError:
+        pass
+
+
 def _classify_solver_failure(log_text: str, result_csv_exists: bool) -> tuple[str, int | None]:
     low = log_text.lower()
     rc_match = SOLVER_RC_RE.search(log_text)
@@ -161,6 +242,7 @@ def _worker_run(args: argparse.Namespace) -> int:
     mesh_log = logs_dir / "mesh.log"
     prep_log = logs_dir / "integration.log"
     solver_log = logs_dir / "solver.log"
+    case_lock_path = case_dir / ".worker_active.lock"
 
     out: dict[str, Any] = {
         "step_file": str(step_file),
@@ -187,6 +269,25 @@ def _worker_run(args: argparse.Namespace) -> int:
         "prep_log_path": str(prep_log),
         "solver_log_path": str(solver_log),
     }
+    case_lock_id, case_lock_existing = _acquire_json_lock(
+        case_lock_path,
+        lock_scope="worker_case",
+        details={
+            "step_file": str(step_file),
+            "engine": args.engine_name,
+            "case_dir": str(case_dir),
+            "worker_result_json": str(result_json_path),
+        },
+    )
+    if case_lock_id is None:
+        out["stage"] = "worker"
+        out["failure_reason"] = "case_already_running"
+        out["active_lock_path"] = str(case_lock_path)
+        out["active_lock"] = case_lock_existing
+        out["duration_sec"] = time.perf_counter() - start_total
+        result_json_path.parent.mkdir(parents=True, exist_ok=True)
+        result_json_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+        return 0
 
     try:
         # 1) Mesh generation
@@ -326,6 +427,7 @@ def _worker_run(args: argparse.Namespace) -> int:
         worker_exc = logs_dir / "worker_exception.log"
         worker_exc.write_text(traceback.format_exc(), encoding="utf-8")
     finally:
+        _release_json_lock(case_lock_path, case_lock_id)
         if not out["converged"] and out["failure_reason"] is None:
             out["failure_reason"] = "unknown_failure"
         if out["stage"] == "init" and not out["converged"]:
@@ -416,6 +518,8 @@ def _run_parent(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     vexis_root = _resolve_under(project_root, args.vexis_root)
     script_path = Path(__file__).resolve()
+    output_root = _resolve_under(project_root, args.output_root)
+    run_lock_path = output_root / ".active_run.lock"
 
     python_exe = args.python_exe
     if any(sep in python_exe for sep in ("/", "\\")):
@@ -429,196 +533,222 @@ def _run_parent(args: argparse.Namespace) -> int:
         print(f"[ERROR] vexis root not found: {vexis_root}")
         return 2
 
+    run_lock_id, run_lock_existing = _acquire_json_lock(
+        run_lock_path,
+        lock_scope="ab_run",
+        details={
+            "project_root": str(project_root),
+            "vexis_root": str(vexis_root),
+            "python_exe": str(python_exe),
+        },
+    )
+    if run_lock_id is None:
+        print(f"[ERROR] active run lock exists: {run_lock_path}")
+        if isinstance(run_lock_existing, dict):
+            print(
+                "[ERROR] lock owner: pid=%s created_at=%s scope=%s"
+                % (
+                    run_lock_existing.get("pid"),
+                    run_lock_existing.get("created_at"),
+                    run_lock_existing.get("scope"),
+                )
+            )
+        print("[ERROR] previous run is still active. wait for completion before rerun.")
+        return 2
+
     mesh_config_base = _resolve_under(vexis_root, args.mesh_config_base)
     mesh_config_exp = _resolve_under(vexis_root, args.mesh_config_exp)
     analysis_config = _resolve_under(vexis_root, args.analysis_config)
-    for p in (mesh_config_base, mesh_config_exp, analysis_config):
-        if not p.exists():
-            print(f"[ERROR] config not found: {p}")
+    try:
+        for p in (mesh_config_base, mesh_config_exp, analysis_config):
+            if not p.exists():
+                print(f"[ERROR] config not found: {p}")
+                return 2
+
+        step_globs = args.step_glob if args.step_glob else ["*.step", "*.stp"]
+        try:
+            steps = _collect_step_files(
+                base_dir=project_root,
+                step_paths=args.step,
+                steps_dir=args.steps_dir,
+                step_globs=step_globs,
+                max_files=args.max_files,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ERROR] failed to collect STEP files: {exc}")
+            return 2
+        if not steps:
+            print("[ERROR] no STEP files matched")
             return 2
 
-    step_globs = args.step_glob if args.step_glob else ["*.step", "*.stp"]
-    try:
-        steps = _collect_step_files(
-            base_dir=project_root,
-            step_paths=args.step,
-            steps_dir=args.steps_dir,
-            step_globs=step_globs,
-            max_files=args.max_files,
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[ERROR] failed to collect STEP files: {exc}")
-        return 2
-    if not steps:
-        print("[ERROR] no STEP files matched")
-        return 2
+        engines = [
+            EngineSpec(name="baseline", module=args.baseline_module, mesh_config_path=mesh_config_base),
+            EngineSpec(name="experimental", module=args.experimental_module, mesh_config_path=mesh_config_exp),
+        ]
 
-    engines = [
-        EngineSpec(name="baseline", module=args.baseline_module, mesh_config_path=mesh_config_base),
-        EngineSpec(name="experimental", module=args.experimental_module, mesh_config_path=mesh_config_exp),
-    ]
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = output_root / f"run_{ts}"
+        run_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = _resolve_under(project_root, args.output_root) / f"run_{ts}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+        plan = {
+            "project_root": str(project_root),
+            "vexis_root": str(vexis_root),
+            "python_exe": python_exe,
+            "steps": [str(s) for s in steps],
+            "engines": [
+                {"name": e.name, "module": e.module, "mesh_config": str(e.mesh_config_path)}
+                for e in engines
+            ],
+            "analysis_config": str(analysis_config),
+            "mesh_timeout_sec": int(args.mesh_timeout_sec),
+            "case_timeout_sec": int(args.case_timeout_sec),
+            "dry_run": bool(args.dry_run),
+        }
+        (run_dir / "run_plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    plan = {
-        "project_root": str(project_root),
-        "vexis_root": str(vexis_root),
-        "python_exe": python_exe,
-        "steps": [str(s) for s in steps],
-        "engines": [
-            {"name": e.name, "module": e.module, "mesh_config": str(e.mesh_config_path)}
-            for e in engines
-        ],
-        "analysis_config": str(analysis_config),
-        "mesh_timeout_sec": int(args.mesh_timeout_sec),
-        "case_timeout_sec": int(args.case_timeout_sec),
-        "dry_run": bool(args.dry_run),
-    }
-    (run_dir / "run_plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[INFO] CAE A/B run dir: {run_dir}")
+        print(f"[INFO] STEP files: {len(steps)}")
+        for s in steps:
+            print(f"[INFO]   - {s}")
 
-    print(f"[INFO] CAE A/B run dir: {run_dir}")
-    print(f"[INFO] STEP files: {len(steps)}")
-    for s in steps:
-        print(f"[INFO]   - {s}")
-
-    rows: list[dict[str, Any]] = []
-    for step in steps:
-        for eng in engines:
-            case_dir = run_dir / "cases" / step.stem / eng.name
-            result_json = case_dir / "worker_result.json"
-            worker_log = case_dir / "logs" / "worker.log"
-            cmd = [
-                python_exe,
-                str(script_path),
-                "--worker-run",
-                "--vexis-root",
-                str(vexis_root),
-                "--engine-name",
-                eng.name,
-                "--engine-module",
-                eng.module,
-                "--mesh-config",
-                str(eng.mesh_config_path),
-                "--analysis-config",
-                str(analysis_config),
-                "--step-file",
-                str(step),
-                "--case-dir",
-                str(case_dir),
-                "--mesh-python-exe",
-                python_exe,
-                "--mesh-timeout-sec",
-                str(int(args.mesh_timeout_sec)),
-                "--worker-result-json",
-                str(result_json),
-            ]
-
-            if args.dry_run:
-                print("[DRY-RUN]", " ".join(shlex.quote(c) for c in cmd))
-                continue
-
-            print(f"[INFO] run start: engine={eng.name} step={step.name}")
-            t0 = time.perf_counter()
-            timed_out = False
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=int(args.case_timeout_sec),
-                    check=False,
-                )
-                output = _decode_output(proc.stdout)
-                rc = int(proc.returncode)
-            except subprocess.TimeoutExpired as exc:
-                output = _decode_output(exc.stdout)
-                rc = 124
-                timed_out = True
-            dt = time.perf_counter() - t0
-
-            worker_log.parent.mkdir(parents=True, exist_ok=True)
-            worker_log.write_text(
-                "CMD: " + " ".join(shlex.quote(c) for c in cmd) + "\n\n" + output,
-                encoding="utf-8",
-            )
-
-            if result_json.exists():
-                try:
-                    row = json.loads(result_json.read_text(encoding="utf-8"))
-                except json.JSONDecodeError:
-                    row = {}
-            else:
-                row = {}
-
-            if not isinstance(row, dict) or not row:
-                row = {
-                    "step_file": str(step),
-                    "engine": eng.name,
-                    "module": eng.module,
-                    "mesh_config": str(eng.mesh_config_path),
-                    "analysis_config": str(analysis_config),
-                    "success": False,
-                    "converged": False,
-                    "stage": "case",
-                    "failure_reason": "case_timeout" if timed_out else f"worker_exit_{rc}",
-                    "returncode": rc,
-                    "duration_sec": dt,
-                    "mesh_duration_sec": None,
-                    "prep_duration_sec": None,
-                    "solver_duration_sec": None,
-                    "mesh_returncode": None,
-                    "solver_returncode": None,
-                    "mesh_singular_warning_count": 0,
-                    "mesh_output_path": None,
-                    "feb_path": None,
-                    "result_csv_path": None,
-                    "mesh_log_path": None,
-                    "prep_log_path": None,
-                    "solver_log_path": None,
-                }
-            else:
-                row["returncode"] = rc
-                if timed_out:
-                    row["success"] = False
-                    row["converged"] = False
-                    row["stage"] = "case"
-                    row["failure_reason"] = "case_timeout"
-                    row["duration_sec"] = dt
-                else:
-                    row["duration_sec"] = float(row.get("duration_sec", dt) or dt)
-
-            rows.append(row)
-            print(
-                "[INFO] run end: engine=%s step=%s converged=%s stage=%s reason=%s time=%.2fs"
-                % (
+        rows: list[dict[str, Any]] = []
+        for step in steps:
+            for eng in engines:
+                case_dir = run_dir / "cases" / step.stem / eng.name
+                result_json = case_dir / "worker_result.json"
+                worker_log = case_dir / "logs" / "worker.log"
+                cmd = [
+                    python_exe,
+                    str(script_path),
+                    "--worker-run",
+                    "--vexis-root",
+                    str(vexis_root),
+                    "--engine-name",
                     eng.name,
-                    step.name,
-                    bool(row.get("converged")),
-                    row.get("stage"),
-                    row.get("failure_reason"),
-                    float(row.get("duration_sec", dt) or dt),
+                    "--engine-module",
+                    eng.module,
+                    "--mesh-config",
+                    str(eng.mesh_config_path),
+                    "--analysis-config",
+                    str(analysis_config),
+                    "--step-file",
+                    str(step),
+                    "--case-dir",
+                    str(case_dir),
+                    "--mesh-python-exe",
+                    python_exe,
+                    "--mesh-timeout-sec",
+                    str(int(args.mesh_timeout_sec)),
+                    "--worker-result-json",
+                    str(result_json),
+                ]
+
+                if args.dry_run:
+                    print("[DRY-RUN]", " ".join(shlex.quote(c) for c in cmd))
+                    continue
+
+                print(f"[INFO] run start: engine={eng.name} step={step.name}")
+                t0 = time.perf_counter()
+                timed_out = False
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=int(args.case_timeout_sec),
+                        check=False,
+                    )
+                    output = _decode_output(proc.stdout)
+                    rc = int(proc.returncode)
+                except subprocess.TimeoutExpired as exc:
+                    output = _decode_output(exc.stdout)
+                    rc = 124
+                    timed_out = True
+                dt = time.perf_counter() - t0
+
+                worker_log.parent.mkdir(parents=True, exist_ok=True)
+                worker_log.write_text(
+                    "CMD: " + " ".join(shlex.quote(c) for c in cmd) + "\n\n" + output,
+                    encoding="utf-8",
                 )
-            )
 
-    if args.dry_run:
-        print("[INFO] dry-run finished (no execution)")
+                if result_json.exists():
+                    try:
+                        row = json.loads(result_json.read_text(encoding="utf-8"))
+                    except json.JSONDecodeError:
+                        row = {}
+                else:
+                    row = {}
+
+                if not isinstance(row, dict) or not row:
+                    row = {
+                        "step_file": str(step),
+                        "engine": eng.name,
+                        "module": eng.module,
+                        "mesh_config": str(eng.mesh_config_path),
+                        "analysis_config": str(analysis_config),
+                        "success": False,
+                        "converged": False,
+                        "stage": "case",
+                        "failure_reason": "case_timeout" if timed_out else f"worker_exit_{rc}",
+                        "returncode": rc,
+                        "duration_sec": dt,
+                        "mesh_duration_sec": None,
+                        "prep_duration_sec": None,
+                        "solver_duration_sec": None,
+                        "mesh_returncode": None,
+                        "solver_returncode": None,
+                        "mesh_singular_warning_count": 0,
+                        "mesh_output_path": None,
+                        "feb_path": None,
+                        "result_csv_path": None,
+                        "mesh_log_path": None,
+                        "prep_log_path": None,
+                        "solver_log_path": None,
+                    }
+                else:
+                    row["returncode"] = rc
+                    if timed_out:
+                        row["success"] = False
+                        row["converged"] = False
+                        row["stage"] = "case"
+                        row["failure_reason"] = "case_timeout"
+                        row["duration_sec"] = dt
+                    else:
+                        row["duration_sec"] = float(row.get("duration_sec", dt) or dt)
+
+                rows.append(row)
+                print(
+                    "[INFO] run end: engine=%s step=%s converged=%s stage=%s reason=%s time=%.2fs"
+                    % (
+                        eng.name,
+                        step.name,
+                        bool(row.get("converged")),
+                        row.get("stage"),
+                        row.get("failure_reason"),
+                        float(row.get("duration_sec", dt) or dt),
+                    )
+                )
+
+        if args.dry_run:
+            print("[INFO] dry-run finished (no execution)")
+            return 0
+
+        _write_csv(run_dir / "ab_results.csv", rows)
+        summary = _aggregate(rows)
+        (run_dir / "ab_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        comp = list(summary.get("comparisons", []))
+        if comp:
+            _write_csv(run_dir / "ab_comparison.csv", comp)
+
+        print(f"[INFO] result csv: {run_dir / 'ab_results.csv'}")
+        print(f"[INFO] summary json: {run_dir / 'ab_summary.json'}")
+        if comp:
+            print(f"[INFO] comparison csv: {run_dir / 'ab_comparison.csv'}")
         return 0
-
-    _write_csv(run_dir / "ab_results.csv", rows)
-    summary = _aggregate(rows)
-    (run_dir / "ab_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    comp = list(summary.get("comparisons", []))
-    if comp:
-        _write_csv(run_dir / "ab_comparison.csv", comp)
-
-    print(f"[INFO] result csv: {run_dir / 'ab_results.csv'}")
-    print(f"[INFO] summary json: {run_dir / 'ab_summary.json'}")
-    if comp:
-        print(f"[INFO] comparison csv: {run_dir / 'ab_comparison.csv'}")
-    return 0
+    finally:
+        _release_json_lock(run_lock_path, run_lock_id)
 
 
 def _build_parser() -> argparse.ArgumentParser:
