@@ -16,84 +16,84 @@ freecad:
   # 各パラメータは実寸法（mm / rad）
   constraints:
     CROWN-D-L:
-      min: 0.741
-      max: 0.819
+      min: 0.702
+      max: 0.858
       base_value: 0.78
     CROWN-D-H:
-      min: 0.741
-      max: 0.819
+      min: 0.702
+      max: 0.858
       base_value: 0.78
     CROWN-W:
-      min: 0.8075
-      max: 0.8925
+      min: 0.7650
+      max: 0.9350
       base_value: 0.85
     PUSHER-D-H:
-      min: 0.57
-      max: 0.63
+      min: 0.54
+      max: 0.66
       base_value: 0.6
     PUSHER-D-L:
-      min: 0.57
-      max: 0.63
+      min: 0.54
+      max: 0.66
       base_value: 0.6
     TIP-D:
-      min: 0.2375
-      max: 0.2625
+      min: 0.2250
+      max: 0.2750
       base_value: 0.25
     STROKE-OUT:
-      min: 0.931
-      max: 1.029
+      min: 0.882
+      max: 1.078
       base_value: 0.98
     STROKE-CENTER:
-      min: 0.931
-      max: 1.029
+      min: 0.882
+      max: 1.078
       base_value: 0.98
     FOOT-W:
-      min: 0.7315
-      max: 0.8085
+      min: 0.6930
+      max: 0.8470
       base_value: 0.77
     FOOT-MID:
-      min: 0.589
-      max: 0.651
+      min: 0.558
+      max: 0.682
       base_value: 0.62
     SHOULDER-ANGLE-OUT:
-      min: 2.073407518
-      max: 2.291660941
+      min: 1.964280806
+      max: 2.400787652
       base_value: 2.18253423
     SHOULDER-ANGLE-IN:
-      min: 0.949240947
-      max: 1.049161047
+      min: 0.899280897
+      max: 1.099121097
       base_value: 0.999200997
     TOP-T:
-      min: 0.5225
-      max: 0.5775
+      min: 0.4950
+      max: 0.6050
       base_value: 0.55
     TOP-DROP:
-      min: 0.3325
-      max: 0.3675
+      min: 0.3150
+      max: 0.3850
       base_value: 0.35
     FOOT-IN:
-      min: 0.589
-      max: 0.651
+      min: 0.558
+      max: 0.682
       base_value: 0.62
     DIAMETER:
-      min: 1.881
-      max: 2.079
+      min: 1.782
+      max: 2.178
       base_value: 1.98
     HEIGHT:
-      min: 2.5175
-      max: 2.7825
+      min: 2.3850
+      max: 2.9150
       base_value: 2.65
     TIP-DROP:
-      min: 0.0665
-      max: 0.0735
+      min: 0.0630
+      max: 0.0770
       base_value: 0.07
     SHOUDER-T:
-      min: 0.285
-      max: 0.315
+      min: 0.270
+      max: 0.330
       base_value: 0.3
     FOOT-OUT:
-      min: 0.589
-      max: 0.651
+      min: 0.558
+      max: 0.682
       base_value: 0.62
 
   step_output_dir: "input/step"
@@ -103,7 +103,7 @@ freecad:
 cad_gate:
   # ai-v0 SafetyPredictor directory (contains model.joblib + scaler.joblib)
   model_path: "input/cad_gate_model"
-  threshold: 0.5
+  threshold: 0.44
   enabled: true
 
   # FeasibilityAwareSampler: 最大リトライ回数
@@ -113,8 +113,10 @@ cae:
   stroke_range:
     min: 0.0
     max: 0.1
-  solver_progress_stall_sec: 600
+  solver_progress_stall_sec: 900
   solver_log_poll_sec: 1.0
+  solver_log_activity_resets_progress_stall: true
+  solver_hard_timeout_sec: 3600
   solver_error_markers:
     - "ERROR TERMINATION"
     - "FATAL ERROR"

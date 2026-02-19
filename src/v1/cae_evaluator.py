@@ -567,10 +567,12 @@ class CaeEvaluator:
 
             stall_sec = max(1, int(self._cae_spec.solver_progress_stall_sec))
             poll_sec = max(0.1, float(self._cae_spec.solver_log_poll_sec))
+            hard_timeout_sec = self._cae_spec.solver_hard_timeout_sec
             start_ts = time.time()
             solver_log_seen = False
             last_solver_progress: Optional[float] = None
             last_solver_progress_ts = start_ts
+            last_log_activity_ts = start_ts
             line_queue: queue.Queue[Optional[str]] = queue.Queue()
 
             def _reader() -> None:
@@ -600,6 +602,7 @@ class CaeEvaluator:
                     reader_done = True
                 elif line_item is not poll_token:
                     msg = str(line_item)
+                    last_log_activity_ts = now
                     low = msg.lower()
                     matched_marker = _detect_solver_error_marker(low, error_markers)
                     if matched_marker and solver_marker_reason is None:
@@ -630,7 +633,27 @@ class CaeEvaluator:
                         self._terminate(proc)
                         break
 
-                if proc.poll() is None and not solver_log_seen and (now - start_ts) > stall_sec:
+                if (
+                    hard_timeout_sec is not None
+                    and proc.poll() is None
+                    and (now - start_ts) > hard_timeout_sec
+                ):
+                    solver_stalled_reason = self._format_solver_hard_timeout_reason(
+                        last_solver_progress,
+                        int(hard_timeout_sec),
+                    )
+                    logger.warning(
+                        "VEXIS solver hard timeout reached (%s); terminating process",
+                        solver_stalled_reason,
+                    )
+                    self._terminate(proc)
+                    break
+
+                if (
+                    proc.poll() is None
+                    and not solver_log_seen
+                    and (now - last_log_activity_ts) > stall_sec
+                ):
                     solver_stalled_reason = self._format_solver_start_reason(stall_sec)
                     logger.warning(
                         "VEXIS solver log did not start (%s); terminating process",
@@ -640,6 +663,7 @@ class CaeEvaluator:
                     break
 
                 progress_age = now - last_solver_progress_ts
+                log_activity_age = now - last_log_activity_ts
                 if (
                     proc.poll() is None
                     and solver_log_seen
@@ -647,6 +671,8 @@ class CaeEvaluator:
                         last_solver_progress,
                         progress_age,
                         stall_sec,
+                        log_activity_age_sec=log_activity_age,
+                        reset_on_log_activity=self._cae_spec.solver_log_activity_resets_progress_stall,
                     )
                 ):
                     solver_stalled_reason = self._format_solver_progress_stall_reason(
@@ -710,6 +736,12 @@ class CaeEvaluator:
         return f"solver_progress_stalled_at_{progress * 100.0:.1f}pct_for_{stall_sec}s"
 
     @staticmethod
+    def _format_solver_hard_timeout_reason(progress: Optional[float], timeout_sec: int) -> str:
+        if progress is None:
+            return f"solver_hard_timeout_for_{timeout_sec}s"
+        return f"solver_hard_timeout_at_{progress * 100.0:.1f}pct_for_{timeout_sec}s"
+
+    @staticmethod
     def _format_solver_error_reason(marker: str) -> str:
         normalized = marker.strip().lower().replace(" ", "_")
         return f"solver_error_marker:{normalized}"
@@ -719,8 +751,17 @@ class CaeEvaluator:
         progress: Optional[float],
         elapsed_since_progress_sec: float,
         stall_sec: int,
+        *,
+        log_activity_age_sec: Optional[float] = None,
+        reset_on_log_activity: bool = True,
     ) -> bool:
         if elapsed_since_progress_sec <= stall_sec:
+            return False
+        if (
+            reset_on_log_activity
+            and log_activity_age_sec is not None
+            and log_activity_age_sec <= stall_sec
+        ):
             return False
         if progress is not None and progress >= 1.0 - 1e-6:
             # After reported 100%, post-processing can continue without solver ticks.

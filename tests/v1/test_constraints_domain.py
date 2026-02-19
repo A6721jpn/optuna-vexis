@@ -29,6 +29,7 @@ _ensure_v1_package_loaded()
 
 from v1.config import BoundsSpec, FreecadSpec, V1Config, load_config  # noqa: E402
 from v1.runner import _convert_physical_bounds_to_ratio  # noqa: E402
+from v1.search_space import normalize_bounds_to_sampling_grid  # noqa: E402
 
 
 def test_load_config_accepts_physical_constraints_domain(tmp_path: Path) -> None:
@@ -86,6 +87,28 @@ def test_convert_physical_bounds_to_ratio_in_runner() -> None:
     assert cfg.bounds[0].max == pytest.approx(2.62 / 2.60)
     assert cfg.bounds[1].min == pytest.approx(2.185 / 2.187)
     assert cfg.bounds[1].max == pytest.approx(2.189 / 2.187)
+
+
+def test_normalize_bounds_to_sampling_grid_stabilizes_ratio_edges() -> None:
+    cfg = V1Config(
+        freecad=FreecadSpec(constraints_domain="physical"),
+        bounds=[
+            BoundsSpec(name="SHOUDER-T", min=0.27, max=0.33, base_value=0.3),
+        ],
+    )
+
+    _convert_physical_bounds_to_ratio(cfg)
+    assert cfg.bounds[0].min == pytest.approx(0.9)
+    assert cfg.bounds[0].min > 0.9
+
+    normalized = normalize_bounds_to_sampling_grid(
+        cfg.bounds,
+        optimization=cfg.optimization,
+        discretization_step=cfg.optimization.discretization_step,
+    )
+    assert normalized == 1
+    assert cfg.bounds[0].min == pytest.approx(0.9)
+    assert cfg.bounds[0].max == pytest.approx(1.1)
 
 
 def test_load_config_rejects_unknown_constraints_domain(tmp_path: Path) -> None:

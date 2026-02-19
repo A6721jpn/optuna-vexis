@@ -192,7 +192,11 @@ class ObjectiveOrchestrator:
         dry_run: bool,
     ) -> float | tuple[float, ...]:
         # 1. Hard constraint check
-        violation = check_hard_constraints(point, self._cfg.bounds)
+        violation = check_hard_constraints(
+            point,
+            self._cfg.bounds,
+            optimization=self._cfg.optimization,
+        )
         if violation:
             logger.info("Trial %d: constraint violation — %s", point.trial_id, violation)
             record.outcome = TrialOutcome.CONSTRAINT_VIOLATION

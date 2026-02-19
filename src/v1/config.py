@@ -47,6 +47,8 @@ class CaeSpec:
     stroke_range_max: float = 0.5
     solver_progress_stall_sec: int = 300
     solver_log_poll_sec: float = 1.0
+    solver_log_activity_resets_progress_stall: bool = True
+    solver_hard_timeout_sec: Optional[int] = 3600
     solver_error_markers: list[str] = field(default_factory=lambda: [
         "error termination",
         "fatal error",
@@ -237,6 +239,14 @@ def load_config(
         stroke_range_max=float(sr.get("max", 0.5)),
         solver_progress_stall_sec=int(cae_raw.get("solver_progress_stall_sec", 300)),
         solver_log_poll_sec=float(cae_raw.get("solver_log_poll_sec", 1.0)),
+        solver_log_activity_resets_progress_stall=bool(
+            cae_raw.get("solver_log_activity_resets_progress_stall", True)
+        ),
+        solver_hard_timeout_sec=(
+            int(cae_raw["solver_hard_timeout_sec"])
+            if cae_raw.get("solver_hard_timeout_sec") is not None
+            else 3600
+        ),
         solver_error_markers=solver_error_markers,
         max_retries=int(cae_raw.get("max_retries", 1)),
         stream_stdout=bool(cae_raw.get("stream_stdout", False)),
@@ -344,5 +354,7 @@ def _validate(cfg: V1Config) -> None:
         raise ValueError("cae.solver_progress_stall_sec must be >= 1")
     if cfg.cae.solver_log_poll_sec <= 0:
         raise ValueError("cae.solver_log_poll_sec must be > 0")
+    if cfg.cae.solver_hard_timeout_sec is not None and cfg.cae.solver_hard_timeout_sec < 1:
+        raise ValueError("cae.solver_hard_timeout_sec must be >= 1 when set")
     if not cfg.cae.solver_error_markers:
         raise ValueError("cae.solver_error_markers must not be empty")

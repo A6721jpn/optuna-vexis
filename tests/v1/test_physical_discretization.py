@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import decimal
 import importlib.util
 import json
 import math
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -32,7 +34,7 @@ _ensure_v1_package_loaded()
 from v1.config import BoundsSpec, ObjectiveSpec, OptimizationSpec, V1Config  # noqa: E402
 from v1.freecad_engine import ConstraintSpec, FreecadEngine  # noqa: E402
 from v1.reporting import generate_markdown_report  # noqa: E402
-from v1.search_space import suggest_design_point  # noqa: E402
+from v1.search_space import build_fixed_search_space, suggest_design_point  # noqa: E402
 
 
 def _is_aligned(value: float, step: float, tol: float = 1e-9) -> bool:
@@ -40,6 +42,15 @@ def _is_aligned(value: float, step: float, tol: float = 1e-9) -> bool:
         return False
     q = value / step
     return abs(q - round(q)) <= tol
+
+
+def _is_optuna_discrete_divisible(low: float, high: float, step: float) -> bool:
+    d_low = decimal.Decimal(str(low))
+    d_high = decimal.Decimal(str(high))
+    d_step = decimal.Decimal(str(step))
+    if d_step <= 0:
+        return False
+    return ((d_high - d_low) % d_step) == decimal.Decimal("0")
 
 
 def test_suggest_design_point_quantizes_physical_params_to_steps() -> None:
@@ -137,6 +148,38 @@ def test_apply_ratios_quantizes_constraint_values_before_sketch_set() -> None:
     assert _is_aligned(captured["SHOULDER-ANGLE-OUT"], 0.001)
 
 
+def test_build_fixed_search_space_uses_optuna_divisible_discrete_ranges() -> None:
+    spec = OptimizationSpec(
+        enable_dimension_discretization=True,
+        non_angle_step=0.01,
+        angle_step=0.001,
+        angle_name_token="ANGLE",
+    )
+    bounds = [
+        BoundsSpec(name="CROWN-W", min=0.95, max=1.05, base_value=0.85),
+        BoundsSpec(name="PUSHER-D-H", min=0.95, max=1.05, base_value=0.6),
+        BoundsSpec(name="SHOULDER-ANGLE-IN", min=0.95, max=1.05, base_value=0.999200997),
+    ]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        space = build_fixed_search_space(bounds=bounds, optimization=spec)
+
+    divisible_warnings = [
+        w for w in caught if "range is not divisible by `step`" in str(w.message)
+    ]
+    assert not divisible_warnings
+
+    for b in bounds:
+        dist = space[b.name]
+        assert dist.step is not None
+        assert _is_optuna_discrete_divisible(
+            low=float(dist.low),
+            high=float(dist.high),
+            step=float(dist.step),
+        )
+
+
 def test_report_table_shows_quantized_physical_values(tmp_path: Path) -> None:
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -215,4 +258,3 @@ def test_report_table_shows_quantized_physical_values(tmp_path: Path) -> None:
     assert "2.207" in content
     assert "2.5969989624838874" not in content
     assert "2.206540013463214" not in content
-

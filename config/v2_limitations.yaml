@@ -1,0 +1,134 @@
+# =============================================================
+# Production v2 CAD Feasibility-Gated Optimization 制限設定 (20次元)
+# =============================================================
+
+freecad:
+  fcstd_path: "input/model.FCStd"
+  sketch_name: "Sketch"
+  surface_name: "Face"
+  surface_label: "SURFACE"
+  # constraints の min/max の解釈:
+  # - "ratio": 基準値に対する比率（従来互換）
+  # - "physical": 実寸法値（mm / rad）。内部で base_value で割って比率化して扱う
+  constraints_domain: "physical"
+  
+  # 20次元パラメータ（ai-v0 SafetyPredictor対応）
+  # 各パラメータは実寸法（mm / rad）
+  constraints:
+    CROWN-D-L:
+      min: 0.702
+      max: 0.858
+      base_value: 0.78
+    CROWN-D-H:
+      min: 0.702
+      max: 0.858
+      base_value: 0.78
+    CROWN-W:
+      min: 0.7650
+      max: 0.9350
+      base_value: 0.85
+    PUSHER-D-H:
+      min: 0.54
+      max: 0.66
+      base_value: 0.6
+    PUSHER-D-L:
+      min: 0.54
+      max: 0.66
+      base_value: 0.6
+    TIP-D:
+      min: 0.2250
+      max: 0.2750
+      base_value: 0.25
+    STROKE-OUT:
+      min: 0.882
+      max: 1.078
+      base_value: 0.98
+    STROKE-CENTER:
+      min: 0.882
+      max: 1.078
+      base_value: 0.98
+    FOOT-W:
+      min: 0.6930
+      max: 0.8470
+      base_value: 0.77
+    FOOT-MID:
+      min: 0.558
+      max: 0.682
+      base_value: 0.62
+    SHOULDER-ANGLE-OUT:
+      min: 1.964280806
+      max: 2.400787652
+      base_value: 2.18253423
+    SHOULDER-ANGLE-IN:
+      min: 0.899280897
+      max: 1.099121097
+      base_value: 0.999200997
+    TOP-T:
+      min: 0.4950
+      max: 0.6050
+      base_value: 0.55
+    TOP-DROP:
+      min: 0.3150
+      max: 0.3850
+      base_value: 0.35
+    FOOT-IN:
+      min: 0.558
+      max: 0.682
+      base_value: 0.62
+    DIAMETER:
+      min: 1.782
+      max: 2.178
+      base_value: 1.98
+    HEIGHT:
+      min: 2.3850
+      max: 2.9150
+      base_value: 2.65
+    TIP-DROP:
+      min: 0.0630
+      max: 0.0770
+      base_value: 0.07
+    SHOUDER-T:
+      min: 0.270
+      max: 0.330
+      base_value: 0.3
+    FOOT-OUT:
+      min: 0.558
+      max: 0.682
+      base_value: 0.62
+
+  step_output_dir: "input/step"
+  step_filename_template: "v2_trial_{trial_id}.step"
+  timeout_sec: 300
+
+cad_gate:
+  # ai-v0 SafetyPredictor directory (contains model.joblib + scaler.joblib)
+  model_path: "input/cad_gate_model"
+  threshold: 0.44
+  enabled: true
+
+  # FeasibilityAwareSampler: 最大リトライ回数
+  rejection_max_retries: 50
+
+cae:
+  stroke_range:
+    min: 0.0
+    max: 0.1
+  solver_progress_stall_sec: 900
+  solver_log_poll_sec: 1.0
+  solver_log_activity_resets_progress_stall: true
+  solver_hard_timeout_sec: 3600
+  solver_error_markers:
+    - "ERROR TERMINATION"
+    - "FATAL ERROR"
+  max_retries: 1
+  stream_stdout: true
+  stdout_log_dir: "output/logs/vexis"
+  stdout_console_level: "INFO"
+
+penalty:
+  base_penalty: 50.0
+  alpha: 10.0
+  failure_weights:
+    cad_infeasible: 1.0
+    constraint_violation: 1.0
+    cae_fail: 0.6

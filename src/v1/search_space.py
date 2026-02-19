@@ -13,6 +13,7 @@ Key additions over proto3:
 
 from __future__ import annotations
 
+import decimal
 import logging
 import math
 import warnings
@@ -132,6 +133,110 @@ def _physical_discretization_step(
     return step
 
 
+def _is_optuna_discrete_range_divisible(low: float, high: float, step: float) -> bool:
+    """Match Optuna's decimal divisibility check for discrete float ranges."""
+    try:
+        d_low = decimal.Decimal(str(low))
+        d_high = decimal.Decimal(str(high))
+        d_step = decimal.Decimal(str(step))
+    except decimal.InvalidOperation:
+        return False
+
+    if d_step <= 0:
+        return False
+
+    d_span = d_high - d_low
+    if d_span < 0:
+        return False
+
+    return (d_span % d_step) == decimal.Decimal("0")
+
+
+def _normalize_discrete_ratio_spec(
+    *,
+    ratio_low: float,
+    ratio_high: float,
+    ratio_step: float,
+    n_steps: int,
+) -> tuple[float, float, float]:
+    """Return (low, high, step) that passes Optuna's discrete-range check.
+
+    Some mathematically valid triples fail Optuna's Decimal(str(float)) check due
+    to binary floating representation noise. We quantize low/step to a stable
+    decimal precision and recompute high from integer step count.
+    """
+    if n_steps <= 0 or ratio_step <= 0.0:
+        return ratio_low, ratio_high, ratio_step
+
+    # Keep a fallback path to preserve current behavior when canonicalization
+    # does not find a better triplet.
+    original_is_divisible = _is_optuna_discrete_range_divisible(
+        ratio_low,
+        ratio_high,
+        ratio_step,
+    )
+    tol = max(abs(ratio_step) * 1e-9, 1e-12)
+
+    d_low_raw = decimal.Decimal(str(ratio_low))
+    d_step_raw = decimal.Decimal(str(ratio_step))
+    d_steps = decimal.Decimal(n_steps)
+
+    for digits in range(15, 7, -1):
+        quantum = decimal.Decimal(1).scaleb(-digits)
+        d_low = d_low_raw.quantize(quantum, rounding=decimal.ROUND_HALF_EVEN)
+        d_step = d_step_raw.quantize(quantum, rounding=decimal.ROUND_HALF_EVEN)
+        if d_step <= 0:
+            continue
+        d_high = d_low + (d_step * d_steps)
+
+        low = float(d_low)
+        high = float(d_high)
+        step = float(d_step)
+
+        if not _is_optuna_discrete_range_divisible(low, high, step):
+            continue
+        if abs(low - ratio_low) > tol:
+            continue
+        if abs(high - ratio_high) > tol:
+            continue
+        return low, high, step
+
+    if original_is_divisible:
+        return ratio_low, ratio_high, ratio_step
+
+    # Last resort: mirror Optuna's high-floor adjustment to avoid warning spam.
+    try:
+        d_low = decimal.Decimal(str(ratio_low))
+        d_high = decimal.Decimal(str(ratio_high))
+        d_step = decimal.Decimal(str(ratio_step))
+        d_span = d_high - d_low
+        if d_step > 0 and d_span >= 0:
+            adjusted_high = float((d_span // d_step) * d_step + d_low)
+            if adjusted_high >= ratio_low and _is_optuna_discrete_range_divisible(
+                ratio_low,
+                adjusted_high,
+                ratio_step,
+            ):
+                return ratio_low, adjusted_high, ratio_step
+    except decimal.InvalidOperation:
+        pass
+
+    return ratio_low, ratio_high, ratio_step
+
+
+def sampling_spec_for_bound(
+    bound: BoundsSpec,
+    optimization: Optional[OptimizationSpec] = None,
+    discretization_step: Optional[float] = None,
+) -> tuple[float, float, Optional[float], Optional[float]]:
+    """Public wrapper for ratio sampling spec derivation."""
+    return _ratio_sampling_spec(
+        bound,
+        optimization=optimization,
+        discretization_step=discretization_step,
+    )
+
+
 def _ratio_sampling_spec(
     bound: BoundsSpec,
     optimization: Optional[OptimizationSpec] = None,
@@ -190,9 +295,20 @@ def _ratio_sampling_spec(
         ratio_hi_adj = ratio_grid_lo
 
     ratio_step = physical_step / abs_base
+    n_steps = idx_hi - idx_lo
     span = ratio_hi_adj - ratio_lo_adj
-    if span <= 0.0 or ratio_step > span:
+    if span <= 0.0 or n_steps <= 0 or ratio_step > span:
         return ratio_lo_adj, ratio_hi_adj, None, physical_step
+
+    ratio_lo_adj, ratio_hi_adj, ratio_step = _normalize_discrete_ratio_spec(
+        ratio_low=ratio_lo_adj,
+        ratio_high=ratio_hi_adj,
+        ratio_step=ratio_step,
+        n_steps=n_steps,
+    )
+    if ratio_hi_adj <= ratio_lo_adj:
+        return ratio_lo_adj, ratio_hi_adj, None, physical_step
+
     return ratio_lo_adj, ratio_hi_adj, ratio_step, physical_step
 
 
@@ -238,7 +354,7 @@ def build_fixed_search_space(
 
     space: dict[str, BaseDistribution] = {}
     for b in bounds:
-        low, high, step, _ = _ratio_sampling_spec(
+        low, high, step, _ = sampling_spec_for_bound(
             b,
             optimization=optimization,
             discretization_step=discretization_step,
@@ -246,6 +362,33 @@ def build_fixed_search_space(
         space[b.name] = FloatDistribution(low=low, high=high, step=step)
 
     return space
+
+
+def normalize_bounds_to_sampling_grid(
+    bounds: list[BoundsSpec],
+    optimization: Optional[OptimizationSpec] = None,
+    discretization_step: Optional[float] = None,
+) -> int:
+    """Normalize bound min/max to the same low/high used by discrete sampling.
+
+    This keeps hard-constraint checks aligned with Optuna's actual sampling
+    lattice and avoids boundary mismatch due to floating-point noise.
+    """
+    normalized = 0
+    for b in bounds:
+        low, high, _, _ = sampling_spec_for_bound(
+            b,
+            optimization=optimization,
+            discretization_step=discretization_step,
+        )
+        if low <= high:
+            b.min = low
+            b.max = high
+        else:
+            b.min = high
+            b.max = low
+        normalized += 1
+    return normalized
 
 
 # ------------------------------------------------------------------
@@ -395,9 +538,11 @@ class FeasibilityAwareSampler(BaseSampler):
             expected_param_names: Full parameter-name list used to avoid
                         evaluating partial vectors during independent sampling.
             fixed_search_space: Static search-space map. When provided, this
-                        wrapper performs full-vector sampling in
+                        wrapper performs candidate sampling in
                         ``sample_relative`` and applies CAD-gate rejection
-                        before any parameter is finalized.
+                        before any parameter is finalized. Dimensions whose
+                        low/high are identical are treated as fixed and
+                        injected into each candidate after sampling.
             repair_fn: Optional repair callback invoked after retries are
                         exhausted. Must return a full parameter dict or None.
             max_retries: Maximum rejection attempts before giving up.
@@ -408,13 +553,104 @@ class FeasibilityAwareSampler(BaseSampler):
         self._expected_param_names = (
             set(expected_param_names) if expected_param_names else None
         )
-        self._fixed_search_space = dict(fixed_search_space) if fixed_search_space else None
+        self._full_search_space = dict(fixed_search_space) if fixed_search_space else None
+        self._relative_fixed_search_space: dict[str, BaseDistribution] | None = None
+        self._fixed_params: dict[str, float] = {}
+        if self._full_search_space is not None:
+            relative_space: dict[str, BaseDistribution] = {}
+            for name, dist in self._full_search_space.items():
+                if self._is_fixed_distribution(dist):
+                    self._fixed_params[name] = self._fixed_value(dist)
+                    continue
+                relative_space[name] = dist
+            self._relative_fixed_search_space = relative_space
+            if self._fixed_params:
+                logger.info(
+                    "FeasibilityAwareSampler: fixed dimensions detected (%d): %s",
+                    len(self._fixed_params),
+                    ", ".join(sorted(self._fixed_params)),
+                )
         self._repair_fn = repair_fn
         self._max_retries = max_retries
         self._stats_accepted = 0
         self._stats_rejected = 0
         self._stats_repaired = 0
         self._independent_cache: dict[int, dict[str, float]] = {}
+        self._fallback_random = RandomSampler()
+        self._base_error_count = 0
+        self._force_random_independent = False
+
+    @staticmethod
+    def _is_fixed_distribution(dist: BaseDistribution) -> bool:
+        if not isinstance(dist, FloatDistribution):
+            return False
+        return math.isclose(
+            float(dist.low),
+            float(dist.high),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+
+    @staticmethod
+    def _fixed_value(dist: BaseDistribution) -> float:
+        if isinstance(dist, FloatDistribution):
+            return float(dist.low)
+        raise TypeError("Unsupported fixed distribution type")
+
+    def _inject_fixed_params(self, params: dict[str, float]) -> dict[str, float]:
+        if not self._fixed_params:
+            return dict(params)
+        merged = dict(params)
+        merged.update(self._fixed_params)
+        return merged
+
+    def _safe_base_sample_relative(
+        self,
+        study: Study,
+        trial: FrozenTrial,
+        search_space: dict[str, BaseDistribution],
+    ) -> dict[str, float]:
+        try:
+            self._force_random_independent = False
+            return dict(self._base.sample_relative(study, trial, search_space) or {})
+        except Exception as exc:
+            self._base_error_count += 1
+            # If relative sampling fails, avoid querying the same failing
+            # base sampler again for independent dimensions in this candidate.
+            self._force_random_independent = True
+            logger.warning(
+                "Base sampler sample_relative failed (%s). "
+                "Falling back to independent/random sampling. error_count=%d",
+                exc,
+                self._base_error_count,
+            )
+            return {}
+
+    def _safe_base_sample_independent(
+        self,
+        study: Study,
+        trial: FrozenTrial,
+        name: str,
+        dist: BaseDistribution,
+    ) -> float:
+        if self._force_random_independent:
+            return float(
+                self._fallback_random.sample_independent(study, trial, name, dist)
+            )
+        try:
+            return float(self._base.sample_independent(study, trial, name, dist))
+        except Exception as exc:
+            self._base_error_count += 1
+            logger.warning(
+                "Base sampler sample_independent failed for %s (%s). "
+                "Using RandomSampler fallback. error_count=%d",
+                name,
+                exc,
+                self._base_error_count,
+            )
+            return float(
+                self._fallback_random.sample_independent(study, trial, name, dist)
+            )
 
     def _score(self, params: dict[str, float]) -> float:
         if self._predict_score_fn is not None:
@@ -431,14 +667,34 @@ class FeasibilityAwareSampler(BaseSampler):
         search_space: dict[str, BaseDistribution],
     ) -> dict[str, float]:
         # Some base samplers return only a subset from sample_relative.
-        # Fill missing dimensions via sample_independent to always evaluate
-        # a complete vector at the CAD gate.
-        params = dict(self._base.sample_relative(study, trial, search_space) or {})
+        # Fill missing variable dimensions via sample_independent.
+        # Fixed dimensions are injected later at candidate assembly time.
+        params = self._safe_base_sample_relative(study, trial, search_space)
         for name, dist in search_space.items():
             if name in params:
                 continue
-            params[name] = self._base.sample_independent(study, trial, name, dist)
+            params[name] = self._safe_base_sample_independent(study, trial, name, dist)
         return params
+
+    def _sample_random_candidate(
+        self,
+        study: Study,
+        trial: FrozenTrial,
+        search_space: dict[str, BaseDistribution],
+    ) -> dict[str, float]:
+        params: dict[str, float] = {}
+        for name, dist in search_space.items():
+            params[name] = float(
+                self._fallback_random.sample_independent(study, trial, name, dist)
+            )
+        return params
+
+    @staticmethod
+    def _candidate_signature(params: dict[str, float]) -> tuple[tuple[str, float], ...]:
+        # Round to reduce floating-point noise and reliably detect duplicates.
+        return tuple(
+            sorted((name, round(float(value), 12)) for name, value in params.items())
+        )
 
     @staticmethod
     def _aligned_value(value: float, dist: BaseDistribution) -> float:
@@ -489,44 +745,78 @@ class FeasibilityAwareSampler(BaseSampler):
         # Always call base sampler first because some samplers (e.g. TPE
         # with group=True) initialize internal state in this hook.
         base_space = self._base.infer_relative_search_space(study, trial)
-        if self._fixed_search_space is not None:
-            return dict(self._fixed_search_space)
+        if self._full_search_space is not None:
+            # Exclude fixed dimensions from relative sampling and inject
+            # them later for CAD-gate evaluation.
+            return dict(self._relative_fixed_search_space or {})
         return base_space
 
     def sample_relative(
         self, study: Study, trial: FrozenTrial,
         search_space: dict[str, BaseDistribution],
     ) -> dict[str, Any]:
-        if not search_space:
+        full_search_space = (
+            self._full_search_space if self._full_search_space is not None else search_space
+        )
+        if not search_space and not self._fixed_params:
+            return {}
+        if not search_space and self._fixed_params:
+            params = self._inject_fixed_params({})
+            params = self._align_params_to_space(params, full_search_space)
+            if self._predict_fn(params):
+                self._stats_accepted += 1
+                return {}
+            self._stats_rejected += 1
             return {}
 
         best_params: dict[str, float] | None = None
+        best_relative_params: dict[str, float] | None = None
         best_score = float("-inf")
         last_params: dict[str, float] = {}
+        last_relative_params: dict[str, float] = {}
+        seen_signatures: set[tuple[tuple[str, float], ...]] = set()
 
         retries = max(1, self._max_retries)
         for _ in range(retries):
-            params = self._sample_full_candidate(study, trial, search_space)
-            params = self._align_params_to_space(params, search_space)
+            sampled = self._sample_full_candidate(study, trial, search_space)
+            sampled = self._align_params_to_space(sampled, search_space)
+            params = self._inject_fixed_params(sampled)
+            params = self._align_params_to_space(params, full_search_space)
+            sig = self._candidate_signature(params)
+            if sig in seen_signatures:
+                sampled = self._sample_random_candidate(study, trial, search_space)
+                sampled = self._align_params_to_space(sampled, search_space)
+                params = self._inject_fixed_params(sampled)
+                params = self._align_params_to_space(params, full_search_space)
+                sig = self._candidate_signature(params)
+            seen_signatures.add(sig)
             last_params = params
+            last_relative_params = sampled
             if self._predict_fn(params):
                 self._stats_accepted += 1
-                return params
+                return sampled
             self._stats_rejected += 1
             score = self._score(params)
             if score > best_score:
                 best_score = score
                 best_params = dict(params)
+                best_relative_params = dict(sampled)
 
         if self._repair_fn is not None:
             candidate = dict(best_params) if best_params is not None else dict(last_params)
             repaired = self._repair_fn(candidate)
             if repaired is not None:
-                repaired = self._align_params_to_space(repaired, search_space)
+                repaired = self._inject_fixed_params(repaired)
+                repaired = self._align_params_to_space(repaired, full_search_space)
             if repaired is not None and self._predict_fn(repaired):
                 self._stats_accepted += 1
                 self._stats_repaired += 1
-                return repaired
+                repaired_relative = {
+                    name: repaired[name]
+                    for name in search_space
+                    if name in repaired
+                }
+                return repaired_relative
 
         logger.warning(
             "FeasibilityAwareSampler: %d retries exhausted in sample_relative; "
@@ -534,9 +824,9 @@ class FeasibilityAwareSampler(BaseSampler):
             self._max_retries,
             best_score if best_score != float("-inf") else -1.0,
         )
-        if best_params is not None:
-            return best_params
-        return last_params
+        if best_relative_params is not None:
+            return best_relative_params
+        return last_relative_params
 
     # -- independent sampling (per-param, with feasibility rejection) ---
 
@@ -547,7 +837,7 @@ class FeasibilityAwareSampler(BaseSampler):
         # When fixed search-space is enabled we evaluate full vectors in
         # sample_relative. Keep independent path pass-through to avoid
         # partial-vector CAD checks.
-        if self._fixed_search_space is not None:
+        if self._full_search_space is not None:
             return self._base.sample_independent(
                 study, trial, param_name, param_distribution,
             )

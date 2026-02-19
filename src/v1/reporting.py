@@ -557,7 +557,7 @@ def _build_iteration_table(
             )
         row = [
             str(trial.number),
-            rec.get("outcome", "-"),
+            _fmt(rec.get("outcome", "-")),
             *value_cells,
             *metric_cells,
             _fmt(_trial_attr(trial, FAILURE_REASON_ATTR, LEGACY_FAILURE_REASON_ATTR)),

@@ -38,6 +38,7 @@ from .search_space import (
     build_fixed_search_space,
     create_sampler,
     make_constraints_func,
+    normalize_bounds_to_sampling_grid,
     suggest_design_point,
 )
 from .types import DesignPoint
@@ -342,6 +343,15 @@ def main() -> int:
                 exc,
             )
         _convert_physical_bounds_to_ratio(cfg)
+        normalized = normalize_bounds_to_sampling_grid(
+            cfg.bounds,
+            optimization=cfg.optimization,
+            discretization_step=cfg.optimization.discretization_step,
+        )
+        logger.info(
+            "Normalized bounds to sampling grid: %d dimensions",
+            normalized,
+        )
 
         cae_evaluator = CaeEvaluator(
             vexis_path=project_root / cfg.paths.vexis_path,

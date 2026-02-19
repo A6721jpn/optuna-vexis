@@ -1,0 +1,121 @@
+# =============================================================
+# Proto1/2 最適化設定ファイル
+# =============================================================
+
+optimization:
+  # サンプラー:
+  # - "AUTO": OptunaHub AutoSampler（推奨）。サンプラーと初期探索を自動選択。
+  # - "TPE": ベイズ最適化。単一目的または多目的に有効。
+  # - "NSGAII": 多目的最適化専用（パレート解探索用）。
+  # - "NSGAIII": 多目的最適化専用（高次元目的で有効）。
+  # - "MOTPE": 多目的TPE（TPESamplerのmulti-objective向け設定）。
+  # - "GP": ガウス過程（実験的）。目的関数は4つ以下にするほうが良い。
+  # - "CMA-ES": 共分散行列適応進化戦略。連続値の最適化に強力（実験的）。
+  # - "RANDOM": ランダム探索。
+  # ※ AUTOを使うには optunahub/cmaes/scipy/torch が必要。
+  sampler: "AUTO"
+  
+  # 最大試行回数
+  max_trials: 300
+  
+  # 収束判定: この残差以下で終了
+  convergence_threshold: 0.001
+
+  # 改善が見られない場合の許容回数 (Early Stopping)
+  # 指定回数連続でベストスコアが更新されない場合、最適化を終了します
+  patience: 100
+  
+  # 乱数シード（再現性のため）
+  seed: 42
+  
+  # 初期探索（ランダム探索）の回数
+  # ※ sampler: "AUTO" の場合は無視されます（AutoSamplerが自動判断）
+  # 他のサンプラーを使用する場合のみ有効
+  n_startup_trials: 70
+  
+  # 目的関数タイプ: "single" | "multi"
+  # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
+  # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはGP,TPE,NSGAII推奨。
+  objective_type: "multi"
+  directions: ["minimize", "minimize"]
+  
+  # 係数の離散化ステップ（オプション）
+  # CAEソフトの有効数字制限に合わせて離散値にする
+  # 例: 0.0001 = 小数点以下4桁、0.01 = 小数点以下2桁
+  # 未指定またはnull = 連続値（離散化なし）
+  # Production v1.0: 寸法サンプリング離散化
+  # - 寸法名に "ANGLE" を含むもの: 0.001刻み
+  # - それ以外: 0.01刻み
+  enable_dimension_discretization: true
+  non_angle_step: 0.01
+  angle_step: 0.001
+  angle_name_token: "ANGLE"
+  # 互換用（enable_dimension_discretization=false時のみ使用）
+  discretization_step: null
+
+objective:
+  # 目的関数タイプ
+  # "rmse": カーブ全体のRMSE
+  # "multi": 複数目的最適化
+  type: "multi"
+  include_rmse_in_multi: false
+  multi_objectives_use_error: false
+  # 目標値を指定した特徴量は、自動的に「目標との差（*_error）」を最適化対象にします。
+  # directions が maximize の場合でも内部で minimize に補正して、
+  # 目標値へ近づく向きで最適化します。
+  target_values:
+    click_ratio: 0.4
+    peak_force: 0.70
+  multi_objectives: ["click_ratio", "peak_force"]
+  
+  # 多目的最適化時の重み
+  weights:
+    click_ratio: 1.0    # クリック率
+    peak_force: 1.0     # 1stピーク荷重
+
+  # 特徴量抽出設定
+  # 利用可能なタイプ:
+  # - "max": 最大値
+  # - "min": 最小値
+  # - "mean": 平均値
+  # - "slope": 指定範囲の傾き
+  # - "peak_position": 最大値の位置(Disp)
+  # - "value_at": 指定Dispでの値
+  # - "local_max": 極大値（ピーク）
+  # - "peak_force": 最初の極値ピーク荷重
+  # - "next_bottom_force": 最初ピーク後の次ボトム荷重
+  # - "click_ratio": (1stピーク - 次ボトム) / 1stピーク
+  features:
+    click_ratio:
+      type: "click_ratio" # (1stピーク - 次ボトム) / 1stピーク
+      # prominence: 0.1   # 必要に応じて閾値を設定
+      column: "force"
+
+    peak_force:
+      type: "peak_force"  # 最初の極値ピーク荷重
+      column: "force"
+
+logging:
+  # ログレベル: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # ログファイル出力先
+  output_dir: "output/cad_gate_only_after_fix/logs"
+
+paths:
+  # ターゲットカーブファイル（inputフォルダ内のマスターカーブ）
+  target_curve: "input/target_curve_generated.csv"
+  
+  # 入力STEPファイルディレクトリ
+  input_dir: "input"
+  
+  # 結果出力ディレクトリ
+  result_dir: "output/cad_gate_only_after_fix"
+  
+  # VEXISサブモジュールパス
+  vexis_path: "vexis"
+
+# =============================================================
+#   Proto1 Optimization System
+#   Created: 2026-01-21
+# =============================================================

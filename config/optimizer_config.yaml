@@ -37,7 +37,7 @@ optimization:
   # "single": 単一のスカラー値を最小化（RMSE または 重み付き和）
   # "multi": 複数の値を独立して最小化（パレート最適解を探索）。samplerはGP,TPE,NSGAII推奨。
   objective_type: "multi"
-  directions: ["maximize", "maximize"]
+  directions: ["minimize", "minimize"]
   
   # 係数の離散化ステップ（オプション）
   # CAEソフトの有効数字制限に合わせて離散値にする

@@ -3,6 +3,14 @@
 Automated optimization system for OGDEN material model coefficients using Optuna.
 Integrates with VEXIS (CAE solver) to find parameters that minimize the RMSE against target curves (experimental data).
 
+## LLM Context Docs (Progressive Disclosure)
+
+For Codex sessions, start with:
+
+- `doc/llm_progressive_disclosure/README.md`
+
+This keeps initial context small and loads deeper details only when needed.
+
 ## Key Features
 
 - **Coefficient Optimization**: Efficient search using Optuna (TPE/NSGA-II).
