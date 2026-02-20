@@ -123,7 +123,7 @@ feasibility:
 
 cad_gate:
   # ai-v0 SafetyPredictor directory (legacy fallback)
-  model_path: "input/cad_gate_model"
+  model_path: "src/ml-prep/models/cad_gate_model"
   threshold: 0.44
   enabled: true
 

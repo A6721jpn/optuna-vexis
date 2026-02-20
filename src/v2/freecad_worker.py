@@ -41,6 +41,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--surface-label", required=True)
     p.add_argument("--constraints-json", required=True)
     p.add_argument("--params-json", required=True)
+    p.add_argument("--constraints-domain", required=False, default="ratio")
+    p.add_argument("--relative-constraints-json", required=False, default=None)
+    p.add_argument("--relative-repair-json", required=False, default=None)
     p.add_argument("--step-path", required=True)
     p.add_argument("--dump-base-values-json", required=False, default=None)
     p.add_argument("--enable-dimension-discretization", required=False, default="false")
@@ -73,9 +76,10 @@ def _physical_step_for_constraint(
 
 def _build_constraint_specs(
     engine,
-    constraint_names: list[str],
+    constraints_raw: dict[str, dict[str, float]],
     ConstraintSpec,
     *,
+    constraints_domain: str,
     enable_dimension_discretization: bool,
     non_angle_step: float,
     angle_step: float,
@@ -100,13 +104,30 @@ def _build_constraint_specs(
     }
 
     specs = []
-    for name in constraint_names:
+    for name, raw_cfg in constraints_raw.items():
         if name not in sketch_map:
             logging.warning("Constraint '%s' not found in sketch; skipping", name)
             continue
         real_idx, real_type = sketch_map[name]
         ctype = ctype_map.get(real_type, "Distance")
         current_val = sketch.Constraints[real_idx].Value
+        ratio_min = None
+        ratio_max = None
+        try:
+            if isinstance(raw_cfg, dict) and "min" in raw_cfg and "max" in raw_cfg:
+                raw_min = float(raw_cfg["min"])
+                raw_max = float(raw_cfg["max"])
+                if constraints_domain == "physical":
+                    base = float(current_val)
+                    if base != 0.0:
+                        ratio_min = raw_min / base
+                        ratio_max = raw_max / base
+                else:
+                    ratio_min = raw_min
+                    ratio_max = raw_max
+        except Exception:
+            ratio_min = None
+            ratio_max = None
         spec = ConstraintSpec(
             index=real_idx,
             name=name,
@@ -121,6 +142,8 @@ def _build_constraint_specs(
                 angle_name_token=angle_name_token,
                 discretization_step=discretization_step,
             ),
+            min_ratio=ratio_min,
+            max_ratio=ratio_max,
         )
         specs.append(spec)
     return specs
@@ -145,7 +168,22 @@ def main() -> int:
 
     constraints_raw = json.loads(constraints_json.read_text(encoding="utf-8"))
     params = json.loads(params_json.read_text(encoding="utf-8"))
-    constraint_names = list(constraints_raw.keys())
+    if not isinstance(constraints_raw, dict):
+        raise RuntimeError("constraints-json must be an object")
+    relative_rules = []
+    if args.relative_constraints_json:
+        relative_path = Path(args.relative_constraints_json)
+        if relative_path.exists():
+            loaded_rules = json.loads(relative_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_rules, list):
+                relative_rules = [r for r in loaded_rules if isinstance(r, dict)]
+    relative_repair = {}
+    if args.relative_repair_json:
+        repair_path = Path(args.relative_repair_json)
+        if repair_path.exists():
+            loaded_repair = json.loads(repair_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_repair, dict):
+                relative_repair = loaded_repair
 
     engine = FreecadEngine(
         fcstd_path=fcstd_path,
@@ -157,8 +195,9 @@ def main() -> int:
         engine.open()
         specs = _build_constraint_specs(
             engine,
-            constraint_names,
+            constraints_raw,
             ConstraintSpec,
+            constraints_domain=str(args.constraints_domain).strip().lower(),
             enable_dimension_discretization=enable_dimension_discretization,
             non_angle_step=float(args.non_angle_step),
             angle_step=float(args.angle_step),
@@ -176,7 +215,11 @@ def main() -> int:
             print(out_path)
             return 0
         engine.set_constraints(specs)
-        if not engine.apply_ratios(params):
+        if not engine.apply_ratios(
+            params,
+            relative_rules=relative_rules,
+            relative_repair=relative_repair,
+        ):
             raise RuntimeError("FreeCAD recompute/validation failed")
         engine.export_step(step_path)
     finally:

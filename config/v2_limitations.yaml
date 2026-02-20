@@ -11,6 +11,33 @@ freecad:
   # - "ratio": 基準値に対する比率（従来互換）
   # - "physical": 実寸法値（mm / rad）。内部で base_value で割って比率化して扱う
   constraints_domain: "physical"
+
+  # 相対拘束ルール（参照拘束を含む）:
+  # - 式は Python 風の数式（+, -, *, /, **, abs, min, max）で記述
+  # - 拘束名は英数字/アンダースコア形式で参照（例: FOOT_EDGE2）
+  # - FOOT-EDGE2 のような名前は自動で FOOT_EDGE2 として参照可能
+  relative_constraints:
+    repair:
+      enabled: true
+      max_iters: 24
+      max_evals: 90
+      step_decay: 0.5
+      initial_step_scale: 6.0
+      min_step_ratio: 0.0001
+      regularization_lambda: 0.01
+    rules:
+      - id: "foot_edge_order"
+        lhs: "FOOT_EDGE2"
+        op: ">="
+        rhs: "FOOT_EDGE1"
+        tolerance: 0.0001
+        weight: 1.0
+        on_violation: "repair_then_reject"
+        repair_drivers:
+          - "FOOT-W"
+          - "FOOT-MID"
+          - "FOOT-IN"
+          - "FOOT-OUT"
   
   # 20次元パラメータ（ai-v0 SafetyPredictor対応）
   # 各パラメータは実寸法（mm / rad）
@@ -102,8 +129,8 @@ freecad:
 
 cad_gate:
   # ai-v0 SafetyPredictor directory (contains model.joblib + scaler.joblib)
-  model_path: "input/cad_gate_model"
-  threshold: 0.44
+  model_path: "src/ml-prep/models/cad_gate_model"
+  threshold: 0.64
   enabled: true
 
   # FeasibilityAwareSampler: 最大リトライ回数

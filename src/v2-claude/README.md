@@ -12,7 +12,7 @@ python scripts/run_v2.py \
 
 ## Dependencies
 
-- CAD gate (`input/cad_gate_model/model.joblib` + `scaler.joblib`) requires:
+- CAD gate (`src/ml-prep/models/cad_gate_model/model.joblib` + `scaler.joblib`) requires:
   - `joblib`
   - `scikit-learn`
 - `AUTO` sampler (OptunaHub AutoSampler) requires:

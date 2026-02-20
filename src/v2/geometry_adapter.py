@@ -93,6 +93,8 @@ class GeometryAdapter:
             tmp = Path(tmpdir)
             constraints_json = tmp / "constraints.json"
             params_json = tmp / "params.json"
+            relative_constraints_json = tmp / "relative_constraints.json"
+            relative_repair_json = tmp / "relative_repair.json"
 
             constraints_json.write_text(
                 json.dumps(self._spec.constraints, ensure_ascii=False),
@@ -100,6 +102,46 @@ class GeometryAdapter:
             )
             params_json.write_text(
                 json.dumps(point.params, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            relative_rules = []
+            for rule in getattr(self._spec, "relative_constraints", []):
+                relative_rules.append(
+                    {
+                        "id": str(rule.id),
+                        "lhs": str(rule.lhs),
+                        "op": str(rule.op),
+                        "rhs": str(rule.rhs),
+                        "tolerance": float(rule.tolerance),
+                        "weight": float(rule.weight),
+                        "on_violation": str(rule.on_violation),
+                        "repair_drivers": [str(x) for x in rule.repair_drivers],
+                    }
+                )
+            relative_constraints_json.write_text(
+                json.dumps(relative_rules, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            repair_spec = getattr(self._spec, "relative_constraint_repair", None)
+            relative_repair_json.write_text(
+                json.dumps(
+                    {
+                        "enabled": bool(getattr(repair_spec, "enabled", True)),
+                        "max_iters": int(getattr(repair_spec, "max_iters", 20)),
+                        "max_evals": int(getattr(repair_spec, "max_evals", 80)),
+                        "step_decay": float(getattr(repair_spec, "step_decay", 0.5)),
+                        "initial_step_scale": float(
+                            getattr(repair_spec, "initial_step_scale", 6.0)
+                        ),
+                        "min_step_ratio": float(
+                            getattr(repair_spec, "min_step_ratio", 1.0e-4)
+                        ),
+                        "regularization_lambda": float(
+                            getattr(repair_spec, "regularization_lambda", 1.0e-2)
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
                 encoding="utf-8",
             )
 
@@ -118,6 +160,12 @@ class GeometryAdapter:
                 str(constraints_json),
                 "--params-json",
                 str(params_json),
+                "--constraints-domain",
+                str(getattr(self._spec, "constraints_domain", "ratio")),
+                "--relative-constraints-json",
+                str(relative_constraints_json),
+                "--relative-repair-json",
+                str(relative_repair_json),
                 "--step-path",
                 str(step_path),
                 "--enable-dimension-discretization",

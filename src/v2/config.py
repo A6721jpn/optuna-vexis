@@ -48,7 +48,7 @@ class ExplorationSpec:
 
 @dataclass
 class CadGateSpec:
-    model_path: Optional[str] = None
+    model_path: Optional[str] = "src/ml-prep/models/cad_gate_model"
     threshold: float = 0.5
     enabled: bool = True
     rejection_max_retries: int = 50
@@ -123,9 +123,36 @@ class FreecadSpec:
     surface_label: str = "SURFACE"
     constraints_domain: str = "ratio"
     constraints: dict[str, dict[str, float]] = field(default_factory=dict)
+    relative_constraints: list["RelativeConstraintRuleSpec"] = field(default_factory=list)
+    relative_constraint_repair: "RelativeConstraintRepairSpec" = field(
+        default_factory=lambda: RelativeConstraintRepairSpec()
+    )
     step_output_dir: str = "input/step"
     step_filename_template: str = "v2_trial_{trial_id}.step"
     timeout_sec: int = 300
+
+
+@dataclass
+class RelativeConstraintRuleSpec:
+    id: str
+    lhs: str
+    op: str = ">="
+    rhs: str = "0.0"
+    tolerance: float = 1.0e-4
+    weight: float = 1.0
+    on_violation: str = "repair_then_reject"
+    repair_drivers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RelativeConstraintRepairSpec:
+    enabled: bool = True
+    max_iters: int = 20
+    max_evals: int = 80
+    step_decay: float = 0.5
+    initial_step_scale: float = 6.0
+    min_step_ratio: float = 1.0e-4
+    regularization_lambda: float = 1.0e-2
 
 
 @dataclass
@@ -216,6 +243,52 @@ def load_config(
     # --- FreeCAD ---
     fc_raw = raw_lim.get("freecad", {})
     constraints_raw = fc_raw.get("constraints", {})
+    relative_raw = fc_raw.get("relative_constraints", {})
+    rules_raw: list[dict[str, Any]] = []
+    repair_raw: dict[str, Any] = {}
+    if isinstance(relative_raw, list):
+        rules_raw = [r for r in relative_raw if isinstance(r, dict)]
+    elif isinstance(relative_raw, dict):
+        raw_rules = relative_raw.get("rules", [])
+        rules_raw = [r for r in raw_rules if isinstance(r, dict)]
+        raw_repair = relative_raw.get("repair", {})
+        repair_raw = raw_repair if isinstance(raw_repair, dict) else {}
+
+    relative_rules: list[RelativeConstraintRuleSpec] = []
+    for i, rr in enumerate(rules_raw):
+        lhs = str(rr.get("lhs", rr.get("expr", ""))).strip()
+        if not lhs:
+            continue
+        raw_repair = rr.get("repair", {})
+        nested_repair = raw_repair if isinstance(raw_repair, dict) else {}
+        drivers_raw = rr.get("repair_drivers")
+        if drivers_raw is None:
+            drivers_raw = nested_repair.get("drivers", [])
+        if not isinstance(drivers_raw, list):
+            drivers_raw = []
+        relative_rules.append(
+            RelativeConstraintRuleSpec(
+                id=str(rr.get("id", f"rule_{i+1}")).strip() or f"rule_{i+1}",
+                lhs=lhs,
+                op=str(rr.get("op", ">=")).strip(),
+                rhs=str(rr.get("rhs", "0.0")).strip(),
+                tolerance=float(rr.get("tolerance", 1.0e-4)),
+                weight=float(rr.get("weight", 1.0)),
+                on_violation=str(rr.get("on_violation", "repair_then_reject")).strip().lower(),
+                repair_drivers=[str(x) for x in drivers_raw if str(x).strip()],
+            )
+        )
+
+    relative_repair = RelativeConstraintRepairSpec(
+        enabled=bool(repair_raw.get("enabled", True)),
+        max_iters=int(repair_raw.get("max_iters", 20)),
+        max_evals=int(repair_raw.get("max_evals", 80)),
+        step_decay=float(repair_raw.get("step_decay", 0.5)),
+        initial_step_scale=float(repair_raw.get("initial_step_scale", 6.0)),
+        min_step_ratio=float(repair_raw.get("min_step_ratio", 1.0e-4)),
+        regularization_lambda=float(repair_raw.get("regularization_lambda", 1.0e-2)),
+    )
+
     freecad = FreecadSpec(
         fcstd_path=fc_raw.get("fcstd_path", "input/model.FCStd"),
         sketch_name=fc_raw.get("sketch_name", "Sketch001"),
@@ -223,6 +296,8 @@ def load_config(
         surface_label=fc_raw.get("surface_label", "SURFACE"),
         constraints_domain=str(fc_raw.get("constraints_domain", "ratio")).strip().lower(),
         constraints=constraints_raw,
+        relative_constraints=relative_rules,
+        relative_constraint_repair=relative_repair,
         step_output_dir=fc_raw.get("step_output_dir", "input/step"),
         step_filename_template=fc_raw.get(
             "step_filename_template", "v2_trial_{trial_id}.step"
@@ -245,7 +320,7 @@ def load_config(
         local_archive_size=int(exp_raw.get("local_archive_size", 200)),
     )
     cad_gate = CadGateSpec(
-        model_path=gate_raw.get("model_path"),
+        model_path=gate_raw.get("model_path", "src/ml-prep/models/cad_gate_model"),
         threshold=float(gate_raw.get("threshold", 0.5)),
         enabled=gate_raw.get("enabled", True),
         rejection_max_retries=int(gate_raw.get("rejection_max_retries", 50)),
@@ -327,6 +402,51 @@ def _validate(cfg: V2Config) -> None:
         raise ValueError(
             "freecad.constraints_domain must be 'ratio' or 'physical'"
         )
+    valid_ops = {">=", "<=", ">", "<", "=="}
+    valid_violation_actions = {"reject", "repair_then_reject"}
+    for rc in cfg.freecad.relative_constraints:
+        if not rc.lhs:
+            raise ValueError("freecad.relative_constraints[].lhs must not be empty")
+        if rc.op not in valid_ops:
+            raise ValueError(
+                f"Invalid relative constraint operator '{rc.op}'. Use one of {sorted(valid_ops)}"
+            )
+        if rc.tolerance < 0.0:
+            raise ValueError(
+                f"Relative constraint tolerance must be >= 0: id={rc.id}"
+            )
+        if rc.weight <= 0.0:
+            raise ValueError(
+                f"Relative constraint weight must be > 0: id={rc.id}"
+            )
+        if rc.on_violation not in valid_violation_actions:
+            raise ValueError(
+                "freecad.relative_constraints[].on_violation must be "
+                f"one of {sorted(valid_violation_actions)} (id={rc.id})"
+            )
+
+    repair = cfg.freecad.relative_constraint_repair
+    if repair.max_iters < 1:
+        raise ValueError("freecad.relative_constraints.repair.max_iters must be >= 1")
+    if repair.max_evals < 1:
+        raise ValueError("freecad.relative_constraints.repair.max_evals must be >= 1")
+    if not (0.0 < repair.step_decay < 1.0):
+        raise ValueError(
+            "freecad.relative_constraints.repair.step_decay must be in (0, 1)"
+        )
+    if repair.initial_step_scale <= 0.0:
+        raise ValueError(
+            "freecad.relative_constraints.repair.initial_step_scale must be > 0"
+        )
+    if repair.min_step_ratio <= 0.0:
+        raise ValueError(
+            "freecad.relative_constraints.repair.min_step_ratio must be > 0"
+        )
+    if repair.regularization_lambda < 0.0:
+        raise ValueError(
+            "freecad.relative_constraints.repair.regularization_lambda must be >= 0"
+        )
+
     for b in cfg.bounds:
         if b.min >= b.max:
             raise ValueError(f"Invalid bounds for {b.name}: min={b.min} >= max={b.max}")
