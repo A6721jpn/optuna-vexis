@@ -1,158 +1,109 @@
 # Optuna for VEXIS
 
-FreeCAD で形状を更新し、STEP を生成し、VEXIS で CAE 評価し、その結果を Optuna で最適化するためのパイプラインです。
-現行の実装ラインは `src/v1` で、目標カーブに対する RMSE や特徴量誤差を最小化する用途を想定しています。
+FreeCAD の寸法を振って STEP を作り、VEXIS の解析結果を見ながら Optuna で条件を探すためのリポジトリです。
 
-## Current Status
+手で「寸法変更 → STEP 出力 → 解析 → 結果確認」を繰り返す代わりに、指定した範囲の中から目標に近い形状条件を探します。
 
-- Production line: `src/v1`
-- Comparison line: `src/proto4-codex`
-- Other tracked lines: `src/proto4-claude`, `src/v2`, `src/v2-claude`, `src/ml-prep`
-- Historical lines: `src/proto1`, `src/proto2`, `src/proto3`
-- Main entrypoints:
-  - `scripts/run_v1.py`
-  - `scripts/run_proto4_codex.py`
+## 目的
 
-追加の実験用スクリプトや設定ファイルもありますが、通常は `src/v1` を起点に見れば十分です。
+- VEXIS の解析結果が目標値に近づく寸法条件を探す
+- クリック率、ピーク荷重、RMSE などを評価値として使う
+- 試した寸法、解析結果、失敗理由をあとから追える形で残す
+- CAD として成立しにくい候補をなるべく避け、無駄な解析を減らす
 
-## LLM Context Docs
+## できること
 
-Codex セッションでは、段階的に文脈を読むために以下を入口にします。
+- `input/model.FCStd` の寸法を trial ごとに変更する
+- FreeCAD から trial ごとの STEP を出力する
+- VEXIS を実行し、結果カーブや特徴量を評価する
+- Optuna で単目的または多目的の探索を回す
+- 途中まで回した study DB を使って続きを回す
+- 各 trial の結果、集計 JSON、Markdown レポート、グラフを出力する
 
-- `doc/llm_progressive_disclosure/README.md`
-
-## What Production v1 Does
-
-- FreeCAD モデルの寸法探索範囲を読み込み、Optuna の探索空間を構築する
-- CAD feasibility gate により、実行前に CAD 不成立になりやすい点を避ける
-- FreeCAD から STEP を生成し、VEXIS を起動して CAE を評価する
-- RMSE または target feature error を目的関数として最適化する
-- 試行ごとの JSON、study DB、集計サマリ、Markdown レポートを保存する
-
-## Required Inputs And Environment
+## 使う前に用意するもの
 
 - Windows
 - Python 3.11 以上
-- Git submodule を初期化済みであること
 - `input/model.FCStd`
 - `input/target_curve_generated.csv`
 - `config/optimizer_config.yaml`
 - `config/v1_0_limitations.yaml`
-- `cad_gate.enabled: true` の場合:
-  - `input/cad_gate_model/model.joblib`
-  - `input/cad_gate_model/scaler.joblib`
+- VEXIS submodule
+- CAD gate を使う場合は `input/cad_gate_model/model.joblib` と `input/cad_gate_model/scaler.joblib`
 
-このリポジトリには、現時点で top-level の `requirements.txt` や `pyproject.toml` はありません。
-そのため、実行に使う Python 環境へ必要パッケージを個別に入れてください。
-
-最低限の目安:
-
-- Baseline: `optuna`, `pandas`, `matplotlib`, `pyyaml`, `scipy`
-- CAD gate 使用時: `joblib`, `scikit-learn`
-- `optimization.sampler: "AUTO"` 使用時: `optunahub`, `cmaes`, `torch`
-
-例:
+submodule は最初に初期化してください。
 
 ```bash
 git submodule update --init --recursive
+```
+
+このリポジトリには top-level の `requirements.txt` や `pyproject.toml` はありません。
+実行に使う Python 環境へ必要なパッケージを入れてください。
+
+```bash
 python -m pip install optuna pandas matplotlib pyyaml scipy joblib scikit-learn optunahub cmaes
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-## Main Config Files
+`optimization.sampler` で `AUTO` を使わない場合、`optunahub`、`cmaes`、`torch` が不要なケースもあります。
 
-- `config/optimizer_config.yaml`
-  - Optuna sampler
-  - trial 数
-  - objective 設定
-  - logging / paths
-- `config/v1_0_limitations.yaml`
-  - FreeCAD 制約範囲
-  - CAD gate 設定
-  - CAE タイムアウト / リトライ
-  - ペナルティ設定
-- `config/proto4_limitations.yaml`
-  - `proto4-codex` ライン用の制約設定
+## 実行
 
-## Quick Start
-
-Production v1.0 を root から起動します。
+通常は v1 を使います。プロジェクトルートから実行してください。
 
 ```bash
 python scripts/run_v1.py --config config/optimizer_config.yaml --limits config/v1_0_limitations.yaml
 ```
 
+試行数だけ変えたい場合:
+
+```bash
+python scripts/run_v1.py --config config/optimizer_config.yaml --limits config/v1_0_limitations.yaml --max-trials 50
+```
+
 よく使うオプション:
 
-- `--max-trials 50`: config より優先して試行回数を上書き
-- `--dry-run`: CAE 実行を伴う本番処理の前に導線確認
-- `--verbose`: コンソールログを詳細化
-- `--version`: 実行時の version / git 情報を JSON で表示
+- `--max-trials 50`: 今回の上限 trial 数を指定する
+- `--dry-run`: 解析を本格的に回す前に導線を確認する
+- `--verbose`: コンソールに詳しいログを出す
+- `--version`: バージョンと git 情報を表示する
 
-補足:
+`output/optuna_study_v1_0.db` が残っている場合は、既存 study を読み込んで続きから動きます。
+完全に新しく回したい場合は、必要な出力を退避してから既存 DB を消してください。
 
-- v1 の study は `output/optuna_study_v1_0.db` に保存されます
-- 既存 DB がある場合、runner は `load_if_exists=True` で study を再利用します
-- そのため、旧 README にあった「resume 専用コマンド」は通常不要です
+## 主に触る設定
 
-## Proto4 Comparison Line
+`config/optimizer_config.yaml`
 
-比較用に `proto4-codex` ラインも実行できます。
+- trial 数
+- sampler
+- 単目的 / 多目的
+- 目標値
+- 評価に使う特徴量
+- 入出力パス
+
+`config/v1_0_limitations.yaml`
+
+- 探索する寸法名と範囲
+- CAD gate の有効 / 無効
+- VEXIS の timeout と retry
+- 失敗時の penalty
+
+## 結果を見る場所
+
+- `output/report_v1_0.md`: 実行結果のレポート
+- `output/summary_v1_0.json`: 実行サマリ
+- `output/optuna_study_v1_0.db`: Optuna study DB
+- `output/trials/trial_<id>/trial_info.json`: trial ごとの詳細
+- `output/report_assets/`: グラフ画像
+- `output/logs/`: 実行ログ
+- `output/logs/vexis/`: VEXIS のログ
+- `input/step/v1_0_trial_<id>.step`: trial ごとの STEP
+
+## 比較用の実行
+
+必要なときだけ `proto4-codex` も実行できます。
 
 ```bash
 python scripts/run_proto4_codex.py --config config/optimizer_config.yaml --limits config/proto4_limitations.yaml
-```
-
-## Outputs
-
-Production v1 実行後の主な出力:
-
-- `output/optuna_study_v1_0.db`
-- `output/run_config_snapshot.json`
-- `output/summary_v1_0.json`
-- `output/report_v1_0.md`
-- `output/report_assets/optimization_history.png` または `.svg`
-- `output/report_assets/pareto_front_2d.png` または `.svg`
-- `output/trials/trial_<id>/trial_info.json`
-- `output/logs/`
-- `output/logs/vexis/`
-- `input/step/v1_0_trial_<id>.step`
-
-## Repository Layout
-
-代表的な構成は以下です。
-
-```text
-.
-├── config/                     # Optimizer / limitation YAML
-├── doc/                        # 設計メモ、runbook、progressive disclosure
-├── input/                      # FCStd, target curve, CAD gate model, generated STEP
-├── output/                     # Study DB, logs, reports, summaries
-├── scripts/                    # Run scripts and support utilities
-├── src/
-│   ├── v1/                     # Production line
-│   ├── proto4-codex/           # Comparison line
-│   ├── proto4-claude/          # Older proto4 implementation
-│   ├── v2/                     # Experimental line
-│   ├── v2-claude/              # Alternative v2 line
-│   ├── ml-prep/                # ML preparation utilities
-│   └── proto1/proto2/proto3/   # Historical implementations
-├── tests/                      # Current tests
-├── vexis/                      # VEXIS submodule
-└── cad-automaton/              # CAD-related submodule
-```
-
-## Versioning
-
-`src/v1/versioning.py` の定義では、Production line は以下です。
-
-- Product: `optuna-for-vexis`
-- Line: `Production`
-- Version: `1.0.0`
-- Baseline: `v1.0`
-
-確認コマンド:
-
-```bash
-python scripts/run_v1.py --version
 ```
