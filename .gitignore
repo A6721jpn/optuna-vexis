@@ -17,14 +17,25 @@ Thumbs.db
 .idea/
 
 # Local agent settings
+.codex/
 .claude/
 .gemini/
+AGENTS.md
+CLAUDE.md
 skills/gemini-coding-servant/
 
 # Project outputs
 input/
 output/
 temp/
+output_log.txt
+debug_output*.txt
+debug_*.py
+inspect_*.py
+check_driving.py
+test_*.py
+run_proto4.py
+run_proto4.bat
 *.log
 *.csv
 
