@@ -16,6 +16,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local agent settings
+.claude/
+.gemini/
+
 # Project outputs
 output/
 temp/
