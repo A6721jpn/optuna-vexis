@@ -19,8 +19,10 @@ Thumbs.db
 # Local agent settings
 .claude/
 .gemini/
+skills/gemini-coding-servant/
 
 # Project outputs
+input/
 output/
 temp/
 *.log
