@@ -22,9 +22,7 @@
 ## Repo Default Scope
 
 - 現行ライン: `src/v1`（実運用向け）
-- 比較ライン: `src/proto4-codex`（proto4系）
-- 参考ライン: `src/proto4-claude`（旧テスト互換）
-- 実行入口: `scripts/run_v1.py`, `scripts/run_proto4_codex.py`
+- 実行入口: `scripts/run_v1.py`
 
 ## Optional Entry-File Pattern
 

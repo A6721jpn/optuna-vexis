@@ -67,9 +67,3 @@ python scripts/run_v1.py --config config/optimizer_config.yaml --limits config/v
 - `output/report_assets/`
 - `output/logs/`
 - `input/step/v1_0_trial_<id>.step`
-
-## 比較用
-
-```bash
-python scripts/run_proto4_codex.py --config config/optimizer_config.yaml --limits config/proto4_limitations.yaml
-```
